@@ -25,7 +25,7 @@ impl Default for SessionInfo {
 }
 
 pub struct MinecraftSession {
-    jvm: Option<JavaVM>,
+    pub jvm: Option<JavaVM>,
     current_session: Mutex<SessionInfo>,
 }
 
@@ -85,7 +85,7 @@ impl MinecraftSession {
         }
     }
 
-    fn get_env(&self) -> Result<AttachGuard, String> {
+    pub fn get_env(&self) -> Result<AttachGuard, String> {
         if let Some(jvm) = &self.jvm {
             jvm.attach_current_thread()
                 .map_err(|e| format!("Failed to attach thread: {:?}", e))
@@ -112,7 +112,7 @@ impl MinecraftSession {
         Some(class_loader_obj)
     }
 
-    fn forge_find_class<'a>(&self, env: &mut JNIEnv<'a>, class_name: &str) -> Option<JClass<'a>> {
+    pub fn forge_find_class<'a>(&self, env: &mut JNIEnv<'a>, class_name: &str) -> Option<JClass<'a>> {
         let launch_class_loader = self.find_forge_launch_class_loader(env)?;
         let class_name_jstr = env.new_string(class_name).ok()?;
 
@@ -288,7 +288,7 @@ impl MinecraftSession {
             "Lnet/minecraft/util/Session;",
             JValue::Object(&new_session_obj),
         )
-        .map_err(|e| format!("Failed to set session field: {:?}", e))?;
+            .map_err(|e| format!("Failed to set session field: {:?}", e))?;
 
         Ok(())
     }
