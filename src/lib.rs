@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use winapi::shared::minwindef::{DWORD, HINSTANCE, LPVOID};
 use winapi::um::winnt::DLL_PROCESS_ATTACH;
-use winapi::um::libloaderapi::{DisableThreadLibraryCalls};
+use winapi::um::libloaderapi::DisableThreadLibraryCalls;
 use winapi::um::processthreadsapi::CreateThread;
 use std::ptr::null_mut;
 
@@ -26,12 +26,17 @@ static DLL_HANDLE: OnceLock<SafeHMODULE> = OnceLock::new();
 static SHOULD_UNLOAD: AtomicBool = AtomicBool::new(false);
 
 pub fn initiate_unload() {
-    SHOULD_UNLOAD.store(true, Ordering::Relaxed);
-    GlobalState::set_menu_visible(false);
+    SHOULD_UNLOAD.store(true, Ordering::Release);
+    GlobalState::instance().set_menu_visible(false);
+    tracing::info!("Unload initiated");
 }
 
 unsafe extern "system" fn start_routine(_parameter: LPVOID) -> DWORD {
-    initialize_logging();
+    if let Err(_) = initialize_logging() {
+        return 1;
+    }
+
+    tracing::info!("Starting initialization sequence");
 
     if let Err(e) = initialize_opengl_hooks() {
         tracing::error!("Failed to initialize OpenGL hooks: {}", e);
@@ -41,13 +46,17 @@ unsafe extern "system" fn start_routine(_parameter: LPVOID) -> DWORD {
     let _ = get_minecraft_session();
     tracing::info!("Minecraft session initialized");
 
+    GlobalState::instance().initialize_account_manager();
+
     loop {
-        if SHOULD_UNLOAD.load(Ordering::Relaxed) {
+        if SHOULD_UNLOAD.load(Ordering::Acquire) {
+            tracing::info!("Shutdown signal received");
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
 
+    tracing::info!("Main loop exited");
     0
 }
 
@@ -61,7 +70,10 @@ pub unsafe extern "system" fn DllMain(
     match call_reason {
         DLL_PROCESS_ATTACH => {
             DisableThreadLibraryCalls(dll_module);
-            DLL_HANDLE.set(SafeHMODULE::new(dll_module)).expect("Failed to set DLL handle");
+
+            if DLL_HANDLE.set(SafeHMODULE::new(dll_module)).is_err() {
+                return 0;
+            }
 
             let thread = CreateThread(
                 null_mut(),

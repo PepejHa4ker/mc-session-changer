@@ -10,6 +10,8 @@ use winapi::shared::windef::HDC;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::wingdi::{wglCreateContext, wglGetCurrentContext, wglMakeCurrent, wglShareLists};
 use winapi::um::winuser::{GetClientRect, SetWindowLongPtrW, WindowFromDC, GWLP_WNDPROC};
+use crate::graphics::svg_icons::SvgIconManager;
+use crate::ui::notification_manager::NotificationManager;
 
 pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> {
     if hdc.is_null() {
@@ -21,7 +23,7 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
         return Err("Failed to get window from DC".to_string());
     }
 
-    GlobalState::set_current_window(window as isize);
+    GlobalState::instance().set_current_window(window as isize);
 
     let mut dimensions = winapi::shared::windef::RECT::default();
     GetClientRect(window, &mut dimensions);
@@ -35,7 +37,7 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
 
     let original_proc = SetWindowLongPtrW(window, GWLP_WNDPROC, window_proc as _);
     if original_proc != 0 {
-        GlobalState::set_original_wndproc(original_proc);
+        GlobalState::instance().set_original_wndproc(original_proc as usize);
     }
 
     let game_context = wglGetCurrentContext();
@@ -73,7 +75,7 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
         return Err("Failed to restore game context".to_string());
     }
 
-    GlobalState::initialize_account_manager();
+    GlobalState::instance().initialize_account_manager();
 
     Ok(PayloadContext {
         painter,
@@ -86,15 +88,16 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
         last_frame_time: None,
         input_events: Vec::new(),
         clipboard: ClipboardManager::new(window),
+        last_notification_update: None,
+        icon_manager: SvgIconManager::new(),
+        notification_manager: NotificationManager::new(),
         new_username: String::new(),
         new_player_id: String::new(),
         new_access_token: String::new(),
-        status_message: String::new(),
         new_session_type: "mojang".to_string(),
         selected_tab: AppTab::SessionChanger,
         account_name_input: String::new(),
         selected_account: None,
-        account_status_message: String::new(),
         show_manual_input_dialog: false,
         manual_account_name: String::new(),
         manual_username: String::new(),

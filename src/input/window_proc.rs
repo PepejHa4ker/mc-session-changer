@@ -17,15 +17,15 @@ pub unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if SHOULD_UNLOAD.load(std::sync::atomic::Ordering::Relaxed) {
-        let original_proc = GlobalState::get_original_wndproc();
+        let original_proc = GlobalState::instance().get_original_wndproc();
         if original_proc != 0 {
             return CallWindowProcW(Some(std::mem::transmute(original_proc)), hwnd, msg, wparam, lparam);
         }
         return 0;
     }
 
-    if !GlobalState::is_menu_visible() {
-        let original_proc = GlobalState::get_original_wndproc();
+    if !GlobalState::instance().is_menu_visible() {
+        let original_proc = GlobalState::instance().get_original_wndproc();
         if original_proc != 0 {
             return CallWindowProcW(Some(std::mem::transmute(original_proc)), hwnd, msg, wparam, lparam);
         }
@@ -37,7 +37,7 @@ pub unsafe extern "system" fn window_proc(
     );
 
     if should_handle {
-        if let Some(context_mutex) = GlobalState::get_context().get() {
+        if let Some(context_mutex) = GlobalState::instance().get_context().get() {
             if let Some(mut context_guard) = context_mutex.try_lock() {
                 if let Some(context) = context_guard.as_mut() {
                     let event = match msg {
@@ -71,7 +71,7 @@ pub unsafe extern "system" fn window_proc(
         }
     }
 
-    let original_proc = GlobalState::get_original_wndproc();
+    let original_proc = GlobalState::instance().get_original_wndproc();
     if original_proc != 0 {
         CallWindowProcW(Some(std::mem::transmute(original_proc)), hwnd, msg, wparam, lparam)
     } else {
@@ -83,7 +83,6 @@ fn handle_key_down(wparam: WPARAM, lparam: LPARAM, context: &mut crate::graphics
     let vk = wparam as i32;
     let modifiers = get_modifiers();
 
-    // Handle Ctrl+V for paste
     if vk == 0x56 && modifiers.ctrl {
         if let Some(text) = context.clipboard.get_text() {
             return Some(Event::Text(text));

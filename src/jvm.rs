@@ -85,7 +85,7 @@ impl MinecraftSession {
         }
     }
 
-    pub fn get_env(&self) -> Result<AttachGuard, String> {
+    pub fn get_env(&'_ self) -> Result<AttachGuard<'_>, String> {
         if let Some(jvm) = &self.jvm {
             jvm.attach_current_thread()
                 .map_err(|e| format!("Failed to attach thread: {:?}", e))

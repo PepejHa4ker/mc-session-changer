@@ -1,98 +1,142 @@
-use std::sync::OnceLock;
-use winapi::shared::windef::HDC;
-use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
-use winapi::um::winuser::GetAsyncKeyState;
-use winapi::um::winuser::VK_INSERT;
-use winapi::um::wingdi::wglGetCurrentContext;
-use parking_lot::Mutex;
+use crate::SHOULD_UNLOAD;
 use crate::core::state::GlobalState;
 use crate::graphics::opengl::create_render_context;
-use crate::{SHOULD_UNLOAD};
+use parking_lot::Mutex;
+use winapi::shared::windef::HDC;
+use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
+use winapi::um::wingdi::wglGetCurrentContext;
+use winapi::um::winuser::GetAsyncKeyState;
+use winapi::um::winuser::VK_INSERT;
 
-type FnSwapBuffers = unsafe extern "system" fn(HDC) -> i32;
+retour::static_detour! {
+    static SwapBuffersDetour: unsafe extern "system" fn(HDC) -> i32;
+}
 
-pub static SWAP_BUFFERS: OnceLock<retour::GenericDetour<FnSwapBuffers>> = OnceLock::new();
+#[derive(Debug)]
+pub enum HookError {
+    ModuleNotFound(&'static str),
+    FunctionNotFound(&'static str),
+    DetourInitializationFailed(retour::Error),
+    DetourEnableFailed(retour::Error),
+}
 
-pub fn initialize_opengl_hooks() -> Result<(), String> {
+impl std::fmt::Display for HookError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HookError::ModuleNotFound(module) => write!(f, "Module not found: {}", module),
+            HookError::FunctionNotFound(func) => write!(f, "Function not found: {}", func),
+            HookError::DetourInitializationFailed(e) => {
+                write!(f, "Detour initialization failed: {:?}", e)
+            }
+            HookError::DetourEnableFailed(e) => write!(f, "Detour enable failed: {:?}", e),
+        }
+    }
+}
+
+impl std::error::Error for HookError {}
+
+pub fn initialize_opengl_hooks() -> Result<(), HookError> {
     unsafe {
         let gdi32 = GetModuleHandleA(b"gdi32.dll\0".as_ptr() as *const i8);
         if gdi32.is_null() {
-            return Err("Failed to get gdi32.dll handle".to_string());
+            return Err(HookError::ModuleNotFound("gdi32.dll"));
         }
 
         let swap_buffers_addr = GetProcAddress(gdi32, b"SwapBuffers\0".as_ptr() as *const i8);
         if swap_buffers_addr.is_null() {
-            return Err("Failed to get SwapBuffers address".to_string());
+            return Err(HookError::FunctionNotFound("SwapBuffers"));
         }
 
-        let detour = retour::GenericDetour::<FnSwapBuffers>::new(
-            std::mem::transmute(swap_buffers_addr),
-            hk_swap_buffers,
-        ).map_err(|e| format!("Failed to create detour: {:?}", e))?;
+        SwapBuffersDetour
+            .initialize(
+                std::mem::transmute(swap_buffers_addr),
+                |hdc| { hk_swap_buffers(hdc) }
+            )
+            .map_err(HookError::DetourInitializationFailed)?;
 
-        detour.enable().map_err(|e| format!("Failed to enable detour: {:?}", e))?;
+        SwapBuffersDetour
+            .enable()
+            .map_err(HookError::DetourEnableFailed)?;
 
-        SWAP_BUFFERS.set(detour).map_err(|_| "Failed to set swap buffers hook")?;
-
+        tracing::info!("OpenGL hooks initialized successfully");
         Ok(())
     }
 }
 
 unsafe extern "system" fn hk_swap_buffers(hdc: HDC) -> i32 {
-    let swap_buffers = SWAP_BUFFERS.get().expect("swap buffers hook not initialized");
+    let state = GlobalState::instance();
 
-    if SHOULD_UNLOAD.load(std::sync::atomic::Ordering::Relaxed) && !GlobalState::is_unload_initiated() {
-        GlobalState::set_unload_initiated(true);
-        let result = swap_buffers.call(hdc);
+    if SHOULD_UNLOAD.load(std::sync::atomic::Ordering::Acquire) && !state.is_unload_initiated() {
+        state.set_unload_initiated(true);
+        let result = SwapBuffersDetour.call(hdc);
         crate::core::cleanup::initiate_cleanup();
         return result;
     }
 
-    if GlobalState::is_unload_initiated() {
-        return swap_buffers.call(hdc);
+    if state.is_unload_initiated() {
+        return SwapBuffersDetour.call(hdc);
     }
 
     handle_input();
 
     let current_context = wglGetCurrentContext();
     if current_context.is_null() {
-        return swap_buffers.call(hdc);
+        return SwapBuffersDetour.call(hdc);
     }
 
-    if GlobalState::is_menu_visible() {
-        render_overlay(hdc);
+    if state.is_menu_visible() {
+        if let Err(e) = render_overlay(hdc) {
+            tracing::warn!("Failed to render overlay: {}", e);
+        }
     }
 
-    swap_buffers.call(hdc)
+    SwapBuffersDetour.call(hdc)
 }
 
 fn handle_input() {
-    let frame_count = GlobalState::increment_frame_count();
+    let state = GlobalState::instance();
+    let frame_count = state.increment_frame_count();
+
     if frame_count % 30 == 0 {
         unsafe {
             let current_key_state = GetAsyncKeyState(VK_INSERT) as u32;
-            let last_key_state = GlobalState::get_last_key_state();
+            let last_key_state = state.get_last_key_state();
 
             if current_key_state != 0 && last_key_state == 0 {
-                let new_visibility = !GlobalState::is_menu_visible();
-                GlobalState::set_menu_visible(new_visibility);
+                let new_visibility = !state.is_menu_visible();
+                state.set_menu_visible(new_visibility);
+                tracing::debug!("Menu visibility toggled: {}", new_visibility);
             }
 
-            GlobalState::set_last_key_state(current_key_state);
+            state.set_last_key_state(current_key_state);
         }
     }
 }
 
-fn render_overlay(hdc: HDC) {
-    let context_mutex = GlobalState::get_context().get_or_init(|| {
-        unsafe {
-            Mutex::new(create_render_context(hdc).ok())
-        }
-    });
+fn render_overlay(hdc: HDC) -> Result<(), Box<dyn std::error::Error>> {
+    let state = GlobalState::instance();
+    let context_mutex = state
+        .get_context()
+        .get_or_init(|| unsafe { Mutex::new(create_render_context(hdc).ok()) });
 
-    if let Some(mut context_guard) = context_mutex.try_lock() {
-        if let Some(context) = context_guard.as_mut() {
-            let _ = context.render(hdc);
+    match context_mutex.try_lock() {
+        Some(mut context_guard) => {
+            if let Some(context) = context_guard.as_mut() {
+                context.render(hdc)?;
+            }
+            Ok(())
         }
+        None => {
+            tracing::warn!("Failed to acquire context lock for rendering");
+            Ok(())
+        }
+    }
+}
+
+pub fn cleanup_opengl_hooks() -> Result<(), retour::Error> {
+    unsafe {
+        SwapBuffersDetour.disable()?;
+        tracing::info!("OpenGL hooks cleaned up successfully");
+        Ok(())
     }
 }

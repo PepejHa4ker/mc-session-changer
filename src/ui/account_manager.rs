@@ -1,78 +1,131 @@
-use egui::{Color32, ScrollArea, Order};
-use crate::graphics::renderer::UiState;
+use crate::account::StoredAccount;
 use crate::core::state::GlobalState;
+use crate::graphics::icon_renderer::{render_clickable_icon_with_text, render_decorative_icon};
+use crate::graphics::renderer::UiState;
+use crate::graphics::svg_icons::SvgIconManager;
 use crate::jvm::{get_minecraft_session, SessionInfo};
+use egui::{Color32, Order, RichText, ScrollArea, TextEdit, Ui, Vec2};
 
-pub fn render_account_manager_tab(ui: &mut egui::Ui, ui_state: &mut UiState) {
+pub fn render_account_manager_tab(ui_state: &mut UiState, icon_manager: &mut SvgIconManager, ui: &mut Ui) {
+    ui.vertical(|ui| {
+        render_header_section(icon_manager, ui);
+        render_current_account_section(icon_manager, ui);
+        render_add_account_section(ui_state, icon_manager, ui);
+        render_accounts_list(ui_state, icon_manager, ui);
+    });
+
+    render_manual_input_dialog(ui_state, icon_manager, ui);
+    render_edit_account_dialog(ui_state, icon_manager, ui);
+}
+
+fn render_header_section(icon_manager: &mut SvgIconManager, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        ui.heading("Account Manager");
+
+        render_decorative_icon(icon_manager, ui, "account", Color32::LIGHT_GREEN, Some(16));
+        ui.label(RichText::new("Account Manager").size(18.0).color(Color32::LIGHT_GREEN));
+
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if let Some(manager) = GlobalState::get_account_manager().get() {
+            if let Some(manager) = GlobalState::instance().get_account_manager().get() {
                 let count = manager.lock().get_account_count();
-                ui.label(format!("📊 {} accounts", count));
+                ui.horizontal(|ui| {
+
+                    render_decorative_icon(icon_manager, ui, "counter", Color32::LIGHT_BLUE, Some(16));
+                    ui.label(format!("{} accounts", count));
+                });
             }
         });
     });
-
-
-    render_current_account_section(ui, ui_state);
-    render_add_account_section(ui, ui_state);
-    render_accounts_list(ui, ui_state);
-    render_account_status(ui, ui_state);
-
-    render_manual_input_dialog(ui, ui_state);
-    render_edit_account_dialog(ui, ui_state);
 }
 
-fn render_current_account_section(ui: &mut egui::Ui, _ui_state: &mut UiState) {
-    ui.heading("Current Account");
+fn render_current_account_section(icon_manager: &mut SvgIconManager, ui: &mut Ui) {
+    ui.group(|ui| {
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
 
-    let session_manager = get_minecraft_session();
-    let current_session = session_manager.get_current_session();
+                render_decorative_icon(icon_manager, ui, "session_active", Color32::LIGHT_BLUE, Some(16));
+                ui.label(RichText::new("Current Account").size(16.0).color(Color32::LIGHT_BLUE));
+            });
 
-    ui.horizontal(|ui| {
-        ui.label("👤");
-        ui.colored_label(Color32::LIGHT_BLUE, &current_session.username);
-        ui.separator();
-        ui.label("🆔");
-        ui.colored_label(Color32::LIGHT_GREEN, &current_session.player_id[..8]);
-        ui.label("...");
-        ui.separator();
-        ui.label("🔑");
-        ui.colored_label(Color32::YELLOW, &current_session.session_type);
+            ui.separator();
+
+            let session_manager = get_minecraft_session();
+            let current_session = session_manager.get_current_session();
+
+            ui.horizontal(|ui| {
+
+                render_decorative_icon(icon_manager, ui, "user", Color32::LIGHT_BLUE, Some(16));
+                ui.colored_label(Color32::LIGHT_BLUE, &current_session.username);
+                ui.separator();
+                render_decorative_icon(icon_manager, ui, "id", Color32::LIGHT_GREEN, Some(16));
+                ui.colored_label(Color32::LIGHT_GREEN, &current_session.player_id[..8.min(current_session.player_id.len())]);
+                ui.label("...");
+                ui.separator();
+                render_decorative_icon(icon_manager, ui, "key", Color32::YELLOW, Some(16));
+                ui.colored_label(Color32::YELLOW, &current_session.session_type);
+            });
+        });
     });
 }
 
-fn render_add_account_section(ui: &mut egui::Ui, ui_state: &mut UiState) {
-    ui.heading("Add Account");
+fn render_add_account_section(ui_state: &mut UiState, icon_manager: &mut SvgIconManager, ui: &mut Ui) {
+    ui.group(|ui| {
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
 
-    ui.horizontal(|ui| {
-        ui.label("Account Name:");
-        ui.text_edit_singleline(ui_state.account_name_input);
-    });
+                render_decorative_icon(icon_manager, ui, "account_add", Color32::LIGHT_GREEN, Some(16));
+                ui.label(RichText::new("Add Account").size(16.0).color(Color32::LIGHT_GREEN));
+            });
 
-    ui.horizontal(|ui| {
-        if ui.button("📥 Add from Current Session").clicked() {
-            add_account_from_current_session(ui_state);
-        }
+            ui.separator();
 
-        if ui.button("✏️ Add Manually").clicked() {
-            *ui_state.show_manual_input_dialog = true;
-            ui_state.manual_account_name.clear();
-            ui_state.manual_username.clear();
-            ui_state.manual_player_id.clear();
-            ui_state.manual_access_token.clear();
-            *ui_state.manual_session_type = "mojang".to_string();
-        }
+            ui.horizontal(|ui| {
+                ui.label("Account Name:");
+                ui.add(TextEdit::singleline(ui_state.account_name_input).desired_width(200.0));
+            });
+
+            ui.horizontal(|ui| {
+
+                if render_clickable_icon_with_text(
+                    icon_manager,
+                    ui,
+                    "add",
+                    "Add from Current Session",
+                    Color32::LIGHT_GREEN,
+                    Some(16),
+                    "Add account using current session data"
+                ).clicked() {
+                    add_account_from_current_session(ui_state);
+                }
+
+                ui.separator();
+
+                if render_clickable_icon_with_text(
+                    icon_manager,
+                    ui,
+                    "edit",
+                    "Add Manually",
+                    Color32::YELLOW,
+                    Some(16),
+                    "Add account with manual input"
+                ).clicked() {
+                    *ui_state.show_manual_input_dialog = true;
+                    ui_state.manual_account_name.clear();
+                    ui_state.manual_username.clear();
+                    ui_state.manual_player_id.clear();
+                    ui_state.manual_access_token.clear();
+                    *ui_state.manual_session_type = "mojang".to_string();
+                }
+            });
+        });
     });
 }
 
-fn render_manual_input_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
+fn render_manual_input_dialog(ui_state: &mut UiState, icon_manager: &mut SvgIconManager, ui: &mut Ui) {
     if !*ui_state.show_manual_input_dialog {
         return;
     }
 
-    egui::Window::new("✏️ Add Account Manually")
+    egui::Window::new("Add Account Manually")
         .collapsible(false)
         .resizable(false)
         .movable(false)
@@ -91,7 +144,11 @@ fn render_manual_input_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
                 );
 
             ui.vertical_centered(|ui| {
-                ui.heading("Manual Account Entry");
+                ui.horizontal(|ui| {
+
+                    render_decorative_icon(icon_manager, ui, "edit", Color32::YELLOW, Some(16));
+                    ui.heading("Manual Account Entry");
+                });
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -127,13 +184,32 @@ fn render_manual_input_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    if ui.button("💾 Save Account").clicked() {
+
+                    if render_clickable_icon_with_text(
+                        icon_manager,
+                        ui,
+                        "save",
+                        "Save Account",
+                        Color32::LIGHT_GREEN,
+                        Some(16),
+                        "Save the account with entered data"
+                    ).clicked() {
                         if save_manual_account(ui_state) {
                             *ui_state.show_manual_input_dialog = false;
                         }
                     }
 
-                    if ui.button("❌ Cancel").clicked() {
+                    ui.separator();
+
+                    if render_clickable_icon_with_text(
+                        icon_manager,
+                        ui,
+                        "cancel",
+                        "Cancel",
+                        Color32::RED,
+                        Some(16),
+                        "Cancel and close dialog"
+                    ).clicked() {
                         *ui_state.show_manual_input_dialog = false;
                     }
                 });
@@ -141,12 +217,12 @@ fn render_manual_input_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
         });
 }
 
-fn render_edit_account_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
+fn render_edit_account_dialog(ui_state: &mut UiState, icon_manager: &mut SvgIconManager, ui: &mut Ui) {
     if !*ui_state.show_edit_dialog {
         return;
     }
 
-    egui::Window::new("✏️ Edit Account")
+    egui::Window::new("Edit Account")
         .collapsible(false)
         .resizable(false)
         .movable(false)
@@ -165,7 +241,11 @@ fn render_edit_account_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
                 );
 
             ui.vertical_centered(|ui| {
-                ui.heading("Edit Account");
+                ui.horizontal(|ui| {
+
+                    render_decorative_icon(icon_manager, ui, "edit", Color32::YELLOW, Some(16));
+                    ui.heading("Edit Account");
+                });
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -201,13 +281,32 @@ fn render_edit_account_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    if ui.button("💾 Save Changes").clicked() {
+
+                    if render_clickable_icon_with_text(
+                        icon_manager,
+                        ui,
+                        "save",
+                        "Save Changes",
+                        Color32::LIGHT_GREEN,
+                        Some(16),
+                        "Save changes to account"
+                    ).clicked() {
                         if save_edited_account(ui_state) {
                             *ui_state.show_edit_dialog = false;
                         }
                     }
 
-                    if ui.button("❌ Cancel").clicked() {
+                    ui.separator();
+
+                    if render_clickable_icon_with_text(
+                        icon_manager,
+                        ui,
+                        "cancel",
+                        "Cancel",
+                        Color32::RED,
+                        Some(16),
+                        "Cancel editing and close dialog"
+                    ).clicked() {
                         *ui_state.show_edit_dialog = false;
                     }
                 });
@@ -219,16 +318,246 @@ fn render_edit_account_dialog(ui: &mut egui::Ui, ui_state: &mut UiState) {
         });
 }
 
+fn render_account_info_aligned(
+    icon_manager: &mut SvgIconManager,
+    ui: &mut Ui,
+    account: &StoredAccount,
+) {
+
+    let username_col_width = 180.0;
+    let account_name_col_width = 120.0;
+    let player_id_col_width = 100.0;
+    let session_type_col_width = 80.0;
+    let date_col_width = 140.0;
+    let row_height = 20.0;
+
+    ui.vertical(|ui| {
+
+        ui.horizontal(|ui| {
+
+            ui.allocate_ui_with_layout(
+                Vec2::new(username_col_width, row_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    render_decorative_icon(icon_manager, ui, "user", Color32::LIGHT_BLUE, Some(16));
+                    ui.add_space(4.0);
+
+                    let display_username = if account.username.len() > 20 {
+                        format!("{}...", &account.username[..17])
+                    } else {
+                        account.username.clone()
+                    };
+
+                    ui.colored_label(Color32::LIGHT_BLUE, display_username)
+                        .on_hover_text(&account.username);
+                }
+            );
+
+            ui.allocate_ui_with_layout(
+                Vec2::new(account_name_col_width, row_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    render_decorative_icon(icon_manager, ui, "tag", Color32::WHITE, Some(16));
+                    ui.add_space(4.0);
+
+                    let display_name = if account.name.len() > 14 {
+                        format!("{}...", &account.name[..11])
+                    } else {
+                        account.name.clone()
+                    };
+
+                    ui.colored_label(Color32::WHITE, display_name)
+                        .on_hover_text(&account.name);
+                }
+            );
+
+            ui.allocate_ui_with_layout(
+                Vec2::new(player_id_col_width, row_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    render_decorative_icon(icon_manager, ui, "id", Color32::LIGHT_GREEN, Some(16));
+                    ui.add_space(4.0);
+
+                    let player_id_short = if account.player_id.len() > 8 {
+                        format!("{}...", &account.player_id[..8])
+                    } else {
+                        account.player_id.clone()
+                    };
+
+                    ui.colored_label(Color32::LIGHT_GREEN, player_id_short)
+                        .on_hover_text(&account.player_id);
+                }
+            );
+
+            ui.allocate_ui_with_layout(
+                Vec2::new(session_type_col_width, row_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    render_decorative_icon(icon_manager, ui, "key", Color32::YELLOW, Some(16));
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::YELLOW, &account.session_type);
+                }
+            );
+        });
+
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+
+            ui.allocate_ui_with_layout(
+                Vec2::new(date_col_width, row_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    render_decorative_icon(icon_manager, ui, "time", Color32::GRAY, Some(14));
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::GRAY, &format!("Added: {}", account.format_created_date()));
+                }
+            );
+
+            ui.add_space(20.0);
+
+            ui.allocate_ui_with_layout(
+                Vec2::new(date_col_width, row_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    render_decorative_icon(icon_manager, ui, "time", Color32::GRAY, Some(14));
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::GRAY, &format!("Used: {}", account.format_last_used()));
+                }
+            );
+        });
+    });
+}
+
+fn render_accounts_list(ui_state: &mut UiState, icon_manager: &mut SvgIconManager, ui: &mut Ui) {
+    ui.group(|ui| {
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+
+                render_decorative_icon(icon_manager, ui, "account", Color32::LIGHT_BLUE, Some(16));
+                ui.label(RichText::new("Saved Accounts").size(16.0).color(Color32::LIGHT_BLUE));
+            });
+
+            ui.separator();
+
+            if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
+                let accounts = {
+                    let manager = manager_mutex.lock();
+                    manager.get_all_accounts()
+                };
+
+                if accounts.is_empty() {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(20.0);
+                        render_decorative_icon(icon_manager, ui, "empty", Color32::GRAY, Some(24));
+                        ui.add_space(8.0);
+                        ui.colored_label(Color32::GRAY, "No accounts saved yet.");
+                        ui.add_space(20.0);
+                    });
+                    return;
+                }
+
+                let mut account_to_delete: Option<String> = None;
+                let mut account_to_use: Option<String> = None;
+                let mut account_to_copy: Option<String> = None;
+                let mut account_to_edit: Option<String> = None;
+
+                ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        for (index, account) in accounts.iter().enumerate() {
+
+                            if index > 0 {
+                                ui.add_space(8.0);
+                            }
+
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+
+                                    render_account_info_aligned(icon_manager, ui, account);
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+
+                                        if render_clickable_icon_with_text(
+                                            icon_manager,
+                                            ui,
+                                            "delete",
+                                            "Delete",
+                                            Color32::RED,
+                                            Some(16),
+                                            "Delete this account"
+                                        ).clicked() {
+                                            account_to_delete = Some(account.name.clone());
+                                        }
+
+                                        if render_clickable_icon_with_text(
+                                            icon_manager,
+                                            ui,
+                                            "edit",
+                                            "Edit",
+                                            Color32::YELLOW,
+                                            Some(16),
+                                            "Edit this account"
+                                        ).clicked() {
+                                            account_to_edit = Some(account.name.clone());
+                                        }
+
+                                        if render_clickable_icon_with_text(
+                                            icon_manager,
+                                            ui,
+                                            "refresh",
+                                            "Use",
+                                            Color32::LIGHT_GREEN,
+                                            Some(16),
+                                            "Switch to this account"
+                                        ).clicked() {
+                                            account_to_use = Some(account.name.clone());
+                                        }
+
+                                        if render_clickable_icon_with_text(
+                                            icon_manager,
+                                            ui,
+                                            "copy",
+                                            "Copy",
+                                            Color32::LIGHT_BLUE,
+                                            Some(16),
+                                            "Copy account data to clipboard"
+                                        ).clicked() {
+                                            account_to_copy = Some(account.name.clone());
+                                        }
+                                    });
+                                });
+                            });
+                        }
+                    });
+
+                if let Some(account_name) = account_to_delete {
+                    delete_account(&account_name, ui_state);
+                }
+                if let Some(account_name) = account_to_use {
+                    use_account(&account_name, ui_state);
+                }
+                if let Some(account_name) = account_to_copy {
+                    copy_account_to_clipboard(&account_name, ui_state);
+                }
+                if let Some(account_name) = account_to_edit {
+                    edit_account(&account_name, ui_state);
+                }
+            }
+        });
+    });
+}
+
 fn save_manual_account(ui_state: &mut UiState) -> bool {
     if ui_state.manual_account_name.is_empty() {
-        *ui_state.account_status_message = "❌ Please enter an account name".to_string();
+        ui_state.notification_manager.show_error("Validation Error", "Please enter an account name");
         return false;
     }
 
     if ui_state.manual_username.is_empty() ||
         ui_state.manual_player_id.is_empty() ||
         ui_state.manual_access_token.is_empty() {
-        *ui_state.account_status_message = "❌ All fields are required".to_string();
+        ui_state.notification_manager.show_error("Validation Error", "All fields are required");
         return false;
     }
 
@@ -239,35 +568,38 @@ fn save_manual_account(ui_state: &mut UiState) -> bool {
         session_type: ui_state.manual_session_type.clone(),
     };
 
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
+    if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
         let mut manager = manager_mutex.lock();
 
         match manager.add_account(ui_state.manual_account_name.clone(), session_info) {
             Ok(_) => {
-                *ui_state.account_status_message = format!("✅ Account '{}' added successfully", ui_state.manual_account_name);
+                ui_state.notification_manager.show_success(
+                    "Account Added",
+                    &format!("Account '{}' added successfully", ui_state.manual_account_name)
+                );
                 true
             }
             Err(e) => {
-                *ui_state.account_status_message = format!("❌ Failed to add account: {}", e);
+                ui_state.notification_manager.show_error("Add Failed", &format!("Failed to add account: {}", e));
                 false
             }
         }
     } else {
-        *ui_state.account_status_message = "❌ Account manager not available".to_string();
+        ui_state.notification_manager.show_error("System Error", "Account manager not available");
         false
     }
 }
 
 fn save_edited_account(ui_state: &mut UiState) -> bool {
     if ui_state.edit_account_name.is_empty() {
-        *ui_state.account_status_message = "❌ Please enter an account name".to_string();
+        ui_state.notification_manager.show_error("Validation Error", "Please enter an account name");
         return false;
     }
 
     if ui_state.edit_username.is_empty() ||
         ui_state.edit_player_id.is_empty() ||
         ui_state.edit_access_token.is_empty() {
-        *ui_state.account_status_message = "❌ All fields are required".to_string();
+        ui_state.notification_manager.show_error("Validation Error", "All fields are required");
         return false;
     }
 
@@ -278,113 +610,37 @@ fn save_edited_account(ui_state: &mut UiState) -> bool {
         session_type: ui_state.edit_session_type.clone(),
     };
 
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
+    if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
         let mut manager = manager_mutex.lock();
 
         if ui_state.edit_account_name != ui_state.edit_original_name {
             if let Err(e) = manager.rename_account(&ui_state.edit_original_name, ui_state.edit_account_name.clone()) {
-                *ui_state.account_status_message = format!("❌ Failed to rename account: {}", e);
+                ui_state.notification_manager.show_error("Rename Failed", &format!("Failed to rename account: {}", e));
                 return false;
             }
         }
 
         match manager.update_account(&ui_state.edit_account_name, session_info) {
             Ok(_) => {
-                *ui_state.account_status_message = format!("✅ Account '{}' updated successfully", ui_state.edit_account_name);
+                ui_state.notification_manager.show_success(
+                    "Account Updated",
+                    &format!("Account '{}' updated successfully", ui_state.edit_account_name)
+                );
                 true
             }
             Err(e) => {
-                *ui_state.account_status_message = format!("❌ Failed to update account: {}", e);
+                ui_state.notification_manager.show_error("Update Failed", &format!("Failed to update account: {}", e));
                 false
             }
         }
     } else {
-        *ui_state.account_status_message = "❌ Account manager not available".to_string();
+        ui_state.notification_manager.show_error("System Error", "Account manager not available");
         false
     }
 }
 
-fn render_accounts_list(ui: &mut egui::Ui, ui_state: &mut UiState) {
-    ui.heading("Saved Accounts");
-
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
-        ui.separator();
-        let accounts = {
-            let manager = manager_mutex.lock();
-            manager.get_all_accounts()
-        };
-
-        if accounts.is_empty() {
-            ui.label("No accounts saved yet.");
-            return;
-        }
-
-        let mut account_to_delete: Option<String> = None;
-        let mut account_to_use: Option<String> = None;
-        let mut account_to_copy: Option<String> = None;
-        let mut account_to_edit: Option<String> = None;
-
-        ScrollArea::vertical()
-            .max_height(200.0)
-            .show(ui, |ui| {
-                for account in &accounts {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("👤");
-                                ui.colored_label(Color32::LIGHT_BLUE, &account.username);
-                                ui.separator();
-                                ui.label("📛");
-                                ui.colored_label(Color32::WHITE, &account.name);
-                            });
-
-                            ui.horizontal(|ui| {
-                                ui.label("🕒 Created:");
-                                ui.colored_label(Color32::GRAY, account.format_created_date());
-                                ui.separator();
-                                ui.label("🕐 Last used:");
-                                ui.colored_label(Color32::GRAY, account.format_last_used());
-                            });
-                        });
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("🗑️").on_hover_text("Delete account").clicked() {
-                                account_to_delete = Some(account.name.clone());
-                            }
-
-                            if ui.button("✏️").on_hover_text("Edit account").clicked() {
-                                account_to_edit = Some(account.name.clone());
-                            }
-
-                            if ui.button("🔄").on_hover_text("Use this account").clicked() {
-                                account_to_use = Some(account.name.clone());
-                            }
-
-                            if ui.button("📋").on_hover_text("Copy to clipboard").clicked() {
-                                account_to_copy = Some(account.name.clone());
-                            }
-                        });
-                    });
-                }
-            });
-
-        if let Some(account_name) = account_to_delete {
-            delete_account(&account_name, ui_state);
-        }
-        if let Some(account_name) = account_to_use {
-            use_account(&account_name, ui_state);
-        }
-        if let Some(account_name) = account_to_copy {
-            copy_account_to_clipboard(&account_name, ui_state);
-        }
-        if let Some(account_name) = account_to_edit {
-            edit_account(&account_name, ui_state);
-        }
-    }
-}
-
 fn edit_account(account_name: &str, ui_state: &mut UiState) {
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
+    if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
         let manager = manager_mutex.lock();
 
         if let Some(account) = manager.get_account(account_name) {
@@ -397,54 +653,40 @@ fn edit_account(account_name: &str, ui_state: &mut UiState) {
 
             *ui_state.show_edit_dialog = true;
         } else {
-            *ui_state.account_status_message = format!("❌ Account '{}' not found", account_name);
+            ui_state.notification_manager.show_error("Account Not Found", &format!("Account '{}' not found", account_name));
         }
-    }
-}
-
-fn render_account_status(ui: &mut egui::Ui, ui_state: &mut UiState) {
-    if !ui_state.account_status_message.is_empty() {
-        ui.separator();
-        let color = if ui_state.account_status_message.starts_with("✅") {
-            Color32::GREEN
-        } else if ui_state.account_status_message.starts_with("❌") {
-            Color32::RED
-        } else if ui_state.account_status_message.starts_with("🔄") {
-            Color32::YELLOW
-        } else {
-            Color32::WHITE
-        };
-
-        ui.colored_label(color, ui_state.account_status_message.as_str());
     }
 }
 
 fn add_account_from_current_session(ui_state: &mut UiState) {
     if ui_state.account_name_input.is_empty() {
-        *ui_state.account_status_message = "❌ Please enter an account name".to_string();
+        ui_state.notification_manager.show_error("Validation Error", "Please enter an account name");
         return;
     }
 
     let session_manager = get_minecraft_session();
     let current_session = session_manager.get_current_session();
 
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
+    if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
         let mut manager = manager_mutex.lock();
 
         match manager.add_account(ui_state.account_name_input.clone(), current_session) {
             Ok(_) => {
-                *ui_state.account_status_message = format!("✅ Account '{}' added successfully", ui_state.account_name_input);
+                ui_state.notification_manager.show_success(
+                    "Account Added",
+                    &format!("Account '{}' added successfully", ui_state.account_name_input)
+                );
                 ui_state.account_name_input.clear();
             }
             Err(e) => {
-                *ui_state.account_status_message = format!("❌ Failed to add account: {}", e);
+                ui_state.notification_manager.show_error("Add Failed", &format!("Failed to add account: {}", e));
             }
         }
     }
 }
 
 fn use_account(account_name: &str, ui_state: &mut UiState) {
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
+    if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
         let session_info = {
             let mut manager = manager_mutex.lock();
             manager.use_account(account_name)
@@ -455,23 +697,26 @@ fn use_account(account_name: &str, ui_state: &mut UiState) {
                 let session_manager = get_minecraft_session();
                 match session_manager.change_session(session_info) {
                     Ok(_) => {
-                        *ui_state.account_status_message = format!("✅ Switched to account '{}'", account_name);
+                        ui_state.notification_manager.show_success(
+                            "Account Switched",
+                            &format!("Switched to account '{}'", account_name)
+                        );
                         *ui_state.selected_account = Some(account_name.to_string());
                     }
                     Err(e) => {
-                        *ui_state.account_status_message = format!("❌ Failed to switch to account: {}", e);
+                        ui_state.notification_manager.show_error("Switch Failed", &format!("Failed to switch to account: {}", e));
                     }
                 }
             }
             Err(e) => {
-                *ui_state.account_status_message = format!("❌ Failed to load account: {}", e);
+                ui_state.notification_manager.show_error("Load Failed", &format!("Failed to load account: {}", e));
             }
         }
     }
 }
 
 fn delete_account(account_name: &str, ui_state: &mut UiState) {
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
+    if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
         let result = {
             let mut manager = manager_mutex.lock();
             manager.remove_account(account_name)
@@ -479,20 +724,23 @@ fn delete_account(account_name: &str, ui_state: &mut UiState) {
 
         match result {
             Ok(_) => {
-                *ui_state.account_status_message = format!("✅ Account '{}' deleted successfully", account_name);
+                ui_state.notification_manager.show_success(
+                    "Account Deleted",
+                    &format!("Account '{}' deleted successfully", account_name)
+                );
                 if ui_state.selected_account.as_deref() == Some(account_name) {
                     *ui_state.selected_account = None;
                 }
             }
             Err(e) => {
-                *ui_state.account_status_message = format!("❌ Failed to delete account: {}", e);
+                ui_state.notification_manager.show_success("Delete Failed", &format!("Failed to delete account: {}", e));
             }
         }
     }
 }
 
 fn copy_account_to_clipboard(account_name: &str, ui_state: &mut UiState) {
-    if let Some(manager_mutex) = GlobalState::get_account_manager().get() {
+    if let Some(manager_mutex) = GlobalState::instance().get_account_manager().get() {
         let json_result = {
             let manager = manager_mutex.lock();
             manager.export_to_clipboard(account_name)
@@ -501,13 +749,16 @@ fn copy_account_to_clipboard(account_name: &str, ui_state: &mut UiState) {
         match json_result {
             Ok(json) => {
                 if ui_state.clipboard.set_text(&json) {
-                    *ui_state.account_status_message = format!("✅ Account '{}' copied to clipboard", account_name);
+                    ui_state.notification_manager.show_success(
+                        "Copied to Clipboard",
+                        &format!("Account '{}' copied to clipboard", account_name)
+                    );
                 } else {
-                    *ui_state.account_status_message = "❌ Failed to copy to clipboard".to_string();
+                    ui_state.notification_manager.show_error("Copy Failed", "Failed to copy to clipboard");
                 }
             }
             Err(e) => {
-                *ui_state.account_status_message = format!("❌ Failed to export account: {}", e);
+                ui_state.notification_manager.show_error("Export Failed", &format!("Failed to export account: {}", e));
             }
         }
     }

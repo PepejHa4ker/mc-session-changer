@@ -5,6 +5,8 @@ use egui_glow::Painter;
 use glow::Context as GlowContext;
 use std::time::Instant;
 use winapi::shared::windef::HDC;
+use crate::graphics::svg_icons::SvgIconManager;
+use crate::ui::notification_manager::NotificationManager;
 
 pub struct PayloadContext {
     pub painter: Painter,
@@ -17,21 +19,19 @@ pub struct PayloadContext {
     pub last_frame_time: Option<Instant>,
     pub input_events: Vec<Event>,
     pub clipboard: ClipboardManager,
+    pub last_notification_update: Option<Instant>,
+    pub icon_manager: SvgIconManager,
+    pub notification_manager: NotificationManager,
 
-    // UI state
     pub new_username: String,
     pub new_player_id: String,
     pub new_access_token: String,
     pub new_session_type: String,
-    pub status_message: String,
 
-    // Account manager UI state
     pub selected_tab: AppTab,
     pub account_name_input: String,
     pub selected_account: Option<String>,
-    pub account_status_message: String,
 
-    // Manual account input dialog
     pub show_manual_input_dialog: bool,
     pub manual_account_name: String,
     pub manual_username: String,
@@ -39,7 +39,6 @@ pub struct PayloadContext {
     pub manual_access_token: String,
     pub manual_session_type: String,
 
-    // Edit account dialog
     pub show_edit_dialog: bool,
     pub edit_account_name: String,
     pub edit_username: String,
