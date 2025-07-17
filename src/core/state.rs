@@ -1,9 +1,8 @@
+use crate::account::AccountManager;
+use crate::graphics::context::PayloadContext;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
-use parking_lot::Mutex;
-use crate::graphics::context::PayloadContext;
-use crate::account::AccountManager;
-use crate::ui::notification_manager::NotificationManager;
 
 pub struct GlobalState {
     last_key_state: AtomicU32,

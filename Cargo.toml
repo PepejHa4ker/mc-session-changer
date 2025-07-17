@@ -20,12 +20,14 @@ tracing-subscriber = { version ="0.3.19", features = ["env-filter", "chrono"] }
 tracing = "0.1.41"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+chrono = "0.4.41"
 tiny-skia = "0.11.4"
 resvg = "0.45.1"
 usvg = "0.45.1"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "allow"
+
 
 [dependencies.winapi]
 version = "0.3.9"
