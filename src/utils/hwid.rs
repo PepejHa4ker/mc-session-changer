@@ -255,16 +255,7 @@ fn disks() -> String {
     des_ecb_pkcs5_encrypt_bytes(DISKS_SALT, &*random_disk(), "fLzm8wj5Pb5wHR3F")
 }
 
-pub fn hwid_bytes() -> io::Result<Vec<u8>> {
-    let mut out = Vec::new();
-
-    for field in collect_hwid() {
-        write_utf(&mut out, &format!("\u{1}{}", field))?;
-    }
-    Ok(out)
-}
-
-pub fn collect_hwid() -> [String; 8] {
+pub fn generate_hwid() -> [String; 8] {
     [
         os(),
         hostname(),
@@ -277,29 +268,3 @@ pub fn collect_hwid() -> [String; 8] {
     ]
 }
 
-fn write_utf(out: &mut Vec<u8>, s: &str) -> io::Result<()> {
-    let mut buf = Vec::new();
-    for c in s.chars() {
-        let code = c as u32;
-        if code == 0x0000 {
-            buf.push(0xC0);
-            buf.push(0x80);
-        } else if code <= 0x007F {
-            buf.push(code as u8);
-        } else if code <= 0x07FF {
-            buf.push((0xC0 | ((code >> 6) & 0x1F)) as u8);
-            buf.push((0x80 | (code & 0x3F)) as u8);
-        } else {
-            buf.push((0xE0 | ((code >> 12) & 0x0F)) as u8);
-            buf.push((0x80 | ((code >> 6) & 0x3F)) as u8);
-            buf.push((0x80 | (code & 0x3F)) as u8);
-        }
-    }
-    let len = buf.len();
-    if len > 65535 {
-        panic!("String too long for modified UTF-8");
-    }
-    out.write_all(&(len as u16).to_be_bytes())?;
-    out.write_all(&buf)?;
-    Ok(())
-}

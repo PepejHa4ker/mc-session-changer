@@ -1,3 +1,5 @@
+#![allow(static_mut_refs)]
+
 use std::ptr::null_mut;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

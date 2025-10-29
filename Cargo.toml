@@ -33,6 +33,7 @@ ecb = { version = "0.1.2", features = ["block-padding", "std"] }
 block-padding = "0.3"
 base64 = "0.22.1"
 rand = { version = "0.8", features = ["std"] }
+libffi = "3"
 
 
 [lints.rust]

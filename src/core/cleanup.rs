@@ -25,8 +25,6 @@ impl CleanupManager {
         Self::cleanup_graphics_context(state)?;
         jhook::unhook_all()?;
         jhook::shutdown()?;
-        JNIHook_Shutdown();
-
         tracing::info!("Resources cleaned up successfully");
         Ok(())
     }

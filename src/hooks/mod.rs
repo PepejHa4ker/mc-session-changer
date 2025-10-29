@@ -1,48 +1,13 @@
-use crate::hooks::jhook::{HOOK_REGISTRY, HookCallback, JNIHookManager};
-use anyhow::{Context, Result};
-use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JValue};
-use jni::sys::{JavaVM, jobject, jstring, jvalue};
-use jni::sys::{jclass, jmethodID};
-use std::ffi::c_void;
-use std::ptr::null_mut;
-use crate::hooks::packet::hwid_hook::HwidBytesHook;
-use crate::hooks::packet::write_hook::PacketWriteHook;
+use crate::hooks::jhook::{JNIHookManager};
+use anyhow::{Result};
+use jni::sys::{JavaVM};
+use crate::hooks::packet::hwid_hook::HwidHook;
+use crate::hooks::packet::packet_write_hook::PacketWriteHook;
 
 pub mod jhook;
 pub mod opengl;
 mod packet;
 
-pub struct RunTickHook;
-
-impl HookCallback for RunTickHook {
-    unsafe fn call(
-        &self,
-        env: *mut jni::sys::JNIEnv,
-        this: jobject,
-        class: jclass,
-        method: jmethodID,
-        args: &[jvalue],
-    ) -> Option<jvalue> {
-        (**env).CallNonvirtualObjectMethodA.unwrap()(env, this, class, method, args.as_ptr());
-
-        let exception_occurred = (**env).ExceptionCheck.unwrap()(env);
-        if exception_occurred == jni::sys::JNI_TRUE {
-            tracing::warn!("Exception occurred in writePacketData");
-            (**env).ExceptionDescribe.unwrap()(env);
-        };
-
-        // if let Ok(mut safe_env) = JNIEnv::from_raw(env) {
-        //     let minecraft_obj = JObject::from_raw(this);
-        //
-        //     if let Err(e) = self.on_tick(&mut safe_env, &minecraft_obj) {
-        //         tracing::error!("Error in onTick: {}", e);
-        //     }
-        // }
-
-        None
-    }
-}
 // impl RunTickHook {
 //     fn on_tick(&self, env: &mut JNIEnv, minecraft_instance: &JObject) -> Result<()> {
 //         if !self.is_in_game(env, minecraft_instance)? {
@@ -351,8 +316,22 @@ pub unsafe fn setup_jni_hooks(jvm: *mut JavaVM) -> Result<()> {
     let hook_manager = JNIHookManager::obtain(jvm);
     tracing::info!("Jvm obtained");
 
-    let hwid_hook = HwidBytesHook;
-    tracing::info!("Read hook");
+    let packet_write_hook = PacketWriteHook;
+    tracing::info!("Write hook");
+    match hook_manager.hook_method(
+        "net/minecraft/util/MessageSerializer",
+        "encode",
+        "(Lio/netty/channel/ChannelHandlerContext;Lnet/minecraft/network/Packet;Lio/netty/buffer/ByteBuf;)V",
+        packet_write_hook,
+    ) {
+        Ok(_) => tracing::info!("Successfully hooked MessageSerializer::encode"),
+        Err(e) => {
+            tracing::warn!("Failed to hook MessageSerializer::encode: {}", e)
+        },
+    }
+
+    let hwid_hook = HwidHook;
+    tracing::info!("Hwid hook");
     match hook_manager.hook_method(
         "ru/sky_drive/dw/pF",
         "do",
@@ -364,5 +343,6 @@ pub unsafe fn setup_jni_hooks(jvm: *mut JavaVM) -> Result<()> {
             tracing::warn!("Failed to hook HWID::writeData: {}", e)
         },
     }
+
     Ok(())
 }
