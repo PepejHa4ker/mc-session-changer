@@ -1,0 +1,23 @@
+[package]
+name = "injector"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+once_cell = "1.21"
+anyhow = "1"
+egui = "0.33"
+eframe = { version = "0.33", default-features = true }
+sysinfo = "0.37.2"
+
+winapi = { version = "0.3", features = [
+    "psapi",
+    "processthreadsapi",
+    "memoryapi",
+    "handleapi",
+    "libloaderapi",
+    "synchapi",
+    "minwinbase",
+    "minwindef",
+    "winnt",
+] }

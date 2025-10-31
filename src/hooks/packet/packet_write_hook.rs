@@ -85,12 +85,12 @@ impl PacketWriteHook {
             preview.extend_from_slice(&bytes);
         }
 
-        tracing::info!(
-            "[PRE-ENCODE] {}: len={} data={:02X?}",
-            name_str,
-            preview.len(),
-            &preview[..preview.len().min(32)]
-        );
+        // tracing::info!(
+        //     "[PRE-ENCODE] {}: len={} data={:02X?}",
+        //     name_str,
+        //     preview.len(),
+        //     &preview[..preview.len().min(32)]
+        // );
 
         let _ = env.call_method(&bytebuf, "release", "()Z", &[]);
         let _ = env.pop_local_frame(&JObject::null());

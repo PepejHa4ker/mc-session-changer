@@ -1,10 +1,12 @@
-use jni::objects::{JClass, JObject, JString, JValue};
+use crate::hooks::setup_jni_hooks;
+use jni::objects::{JClass, JObject, JString, JValue, JValueGen};
 use jni::{AttachGuard, JNIEnv, JavaVM};
 use parking_lot::Mutex;
 use std::ptr::null_mut;
 use std::sync::OnceLock;
+use jni::signature::{Primitive, ReturnType};
+use jni::sys::jvalue;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
-use crate::hooks::setup_jni_hooks;
 
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
@@ -40,7 +42,6 @@ impl JvmInfo {
             current_session: Mutex::new(SessionInfo::default()),
         }
     }
-    
 
     pub fn initialize(&mut self) -> Result<(), String> {
         unsafe {
@@ -120,7 +121,11 @@ impl JvmInfo {
         Some(class_loader_obj)
     }
 
-    pub fn forge_find_class<'a>(&self, env: &mut JNIEnv<'a>, class_name: &str) -> Option<JClass<'a>> {
+    pub fn forge_find_class<'a>(
+        &self,
+        env: &mut JNIEnv<'a>,
+        class_name: &str,
+    ) -> Option<JClass<'a>> {
         let launch_class_loader = self.find_forge_launch_class_loader(env)?;
         let class_name_jstr = env.new_string(class_name).ok()?;
 
@@ -143,7 +148,7 @@ impl JvmInfo {
 
     fn get_minecraft_instance<'a>(&self, env: &mut JNIEnv<'a>) -> Option<JObject<'a>> {
         let minecraft_class = self.forge_find_class(env, "net.minecraft.client.Minecraft")?;
-       
+
         unsafe {
             if !JVM_HOOKS_INITIALIZED {
                 JVM_HOOKS_INITIALIZED = true;
@@ -302,7 +307,7 @@ impl JvmInfo {
             "Lnet/minecraft/util/Session;",
             JValue::Object(&new_session_obj),
         )
-            .map_err(|e| format!("Failed to set session field: {:?}", e))?;
+        .map_err(|e| format!("Failed to set session field: {:?}", e))?;
 
         Ok(())
     }
@@ -314,6 +319,76 @@ impl JvmInfo {
     pub fn refresh_session(&self) -> Result<(), String> {
         let session_info = self.load_current_session()?;
         *self.current_session.lock() = session_info;
+
+        if let Ok(mut env) = self.get_env() {
+            unsafe {
+                let launch_cl = self.find_forge_launch_class_loader(&mut env).unwrap();
+
+                let class_name_jstr = env.new_string("ru.sky_drive.dw.op").unwrap();
+
+                let cls = env
+                    .call_method(
+                        &launch_cl,
+                        "findClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;",
+                        &[JValue::Object(&class_name_jstr)],
+                    )
+                    .unwrap()
+                    .l()
+                    .unwrap();
+
+                let cls = JClass::from(cls);
+
+                let ctor_id = env.get_method_id(&cls, "<init>", "()V").unwrap();
+
+                let packet = env.new_object_unchecked(&cls, ctor_id, &[]).unwrap();
+
+                let _ = env
+                    .set_field(&packet, "do", "I", JValueGen::Int(2406))
+                    .expect("1245");
+
+                let _ = env
+                    .set_field(&packet, "if", "I", JValueGen::Int(68))
+                    .expect("12456");
+
+                let _ = env
+                    .set_field(&packet, "for", "I", JValueGen::Int(798))
+                    .expect("128845");
+
+
+                let class_name_jstr = env.new_string("ru.sky_drive.dw.od").unwrap();
+
+                let od_class = env
+                    .call_method(
+                        &launch_cl,
+                        "findClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;",
+                        &[JValue::Object(&class_name_jstr)],
+                    )
+                    .unwrap()
+                    .l()
+                    .unwrap();
+
+                let class = JClass::from(od_class);
+                let id = env.get_static_method_id(&class, "if", "(Lcpw/mods/fml/common/network/simpleimpl/IMessage;)V").unwrap();
+
+                let args = [jvalue { l: packet.as_raw() }];
+                for _ in 0..20 {
+                    if let Ok(_) = env.call_static_method_unchecked(
+                        &class,
+                        id,
+                        ReturnType::Primitive(Primitive::Void),
+                        &args,
+                    ) {
+                        tracing::info!("Packet sent");
+                    } else {
+                        tracing::error!("Failed to send packet");
+                    }
+                }
+            }
+        } else {
+            tracing::error!("Failed to create packet");
+        }
         Ok(())
     }
 

@@ -5,6 +5,11 @@ edition = "2024"
 
 build = "build.rs"
 
+[workspace]
+members = [
+    ".",
+    "injector"
+]
 
 [lib]
 crate-type = ["cdylib"]
