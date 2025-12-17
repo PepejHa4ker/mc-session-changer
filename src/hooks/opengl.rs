@@ -1,15 +1,17 @@
-use crate::SHOULD_UNLOAD;
 use crate::core::state::GlobalState;
 use crate::graphics::opengl::create_render_context;
+use crate::input::clipboard::ClipboardManager;
+use crate::input::window_proc::window_proc;
+use crate::SHOULD_UNLOAD;
 use parking_lot::Mutex;
 use std::ffi::c_void;
 use winapi::{
-    um::winuser::GetAsyncKeyState,
-    um::wingdi::wglGetCurrentContext,
-    um::libloaderapi::{GetModuleHandleA, GetProcAddress},
     shared::windef::HDC,
-    um::winuser::VK_INSERT
+    um::libloaderapi::{GetModuleHandleA, GetProcAddress},
+    um::wingdi::wglGetCurrentContext,
+    um::winuser::{GetAsyncKeyState, SetWindowLongPtrW, WindowFromDC, GWLP_WNDPROC},
 };
+use winapi::um::winuser::VK_INSERT;
 
 retour::static_detour! {
     static SwapBuffersDetour: unsafe extern "system" fn(HDC) -> i32;
@@ -143,6 +145,7 @@ unsafe extern "system" fn hk_swap_buffers(hdc: HDC) -> i32 {
         return SwapBuffersDetour.call(hdc);
     }
 
+    ensure_window_hook(hdc);
     handle_input();
 
     let current_context = wglGetCurrentContext();
@@ -177,6 +180,45 @@ fn handle_input() {
             state.set_last_key_state(current_key_state);
         }
     }
+}
+
+fn ensure_window_hook(hdc: HDC) {
+    let state = GlobalState::instance();
+
+    // Skip until the render context is initialized so we do not overwrite the original wndproc.
+    if state.get_context().get().is_none() {
+        return;
+    }
+
+    let window = unsafe { WindowFromDC(hdc) };
+    if window.is_null() {
+        return;
+    }
+
+    if state.get_current_window() == window as isize {
+        return;
+    }
+
+    unsafe {
+        let original_proc = SetWindowLongPtrW(window, GWLP_WNDPROC, window_proc as _);
+        if original_proc == 0 {
+            tracing::warn!("Failed to hook window procedure after window change");
+            return;
+        }
+
+        state.set_original_wndproc(original_proc as usize);
+        state.set_current_window(window as isize);
+    }
+
+    if let Some(context_mutex) = state.get_context().get() {
+        if let Some(mut context_guard) = context_mutex.try_lock() {
+            if let Some(context) = context_guard.as_mut() {
+                context.clipboard = ClipboardManager::new(window);
+            }
+        }
+    }
+
+    tracing::debug!("Window procedure reattached for new window handle");
 }
 
 fn render_overlay(hdc: HDC) -> Result<(), Box<dyn std::error::Error>> {

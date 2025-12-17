@@ -1,11 +1,12 @@
+use std::collections::HashSet;
+use std::path::Path;
 use crate::hooks::setup_jni_hooks;
-use jni::objects::{JClass, JObject, JString, JValue, JValueGen};
+use jni::objects::{JClass, JObject, JString, JValue};
 use jni::{AttachGuard, JNIEnv, JavaVM};
 use parking_lot::Mutex;
 use std::ptr::null_mut;
 use std::sync::OnceLock;
-use jni::signature::{Primitive, ReturnType};
-use jni::sys::jvalue;
+use jni::errors::Error;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 
 #[derive(Debug, Clone)]
@@ -151,8 +152,13 @@ impl JvmInfo {
 
         unsafe {
             if !JVM_HOOKS_INITIALIZED {
-                JVM_HOOKS_INITIALIZED = true;
-                setup_jni_hooks(self.get_jvm().unwrap().get_java_vm_pointer()).expect("a");
+                let jvm_ptr = self.get_jvm().unwrap().get_java_vm_pointer();
+                match setup_jni_hooks(jvm_ptr) {
+                    Ok(_) => JVM_HOOKS_INITIALIZED = true,
+                    Err(e) => {
+                        tracing::error!("Failed to set up JNI hooks: {}", e);
+                    }
+                }
             }
         }
         let minecraft_instance = env
@@ -319,76 +325,52 @@ impl JvmInfo {
     pub fn refresh_session(&self) -> Result<(), String> {
         let session_info = self.load_current_session()?;
         *self.current_session.lock() = session_info;
+        let mut env = self.get_env()?;
 
-        if let Ok(mut env) = self.get_env() {
-            unsafe {
-                let launch_cl = self.find_forge_launch_class_loader(&mut env).unwrap();
+        let cls = self.forge_find_class(
+            &mut env,
+            "com/luffy/mixedmod/client/handlers/PacketHandler",
+        ).unwrap();
 
-                let class_name_jstr = env.new_string("ru.sky_drive.dw.op").unwrap();
+        let stream_a: JObject = env
+            .call_static_method(&cls, "getClasses", "()Ljava/util/stream/Stream;", &[])
+            .unwrap()
+            .l()
+            .unwrap();
 
-                let cls = env
-                    .call_method(
-                        &launch_cl,
-                        "findClass",
-                        "(Ljava/lang/String;)Ljava/lang/Class;",
-                        &[JValue::Object(&class_name_jstr)],
-                    )
-                    .unwrap()
-                    .l()
-                    .unwrap();
+        let stream_b: JObject = env
+            .call_static_method(
+                &cls,
+                "getRuntimeClasses",
+                "()Ljava/util/stream/Stream;",
+                &[],
+            )
+            .unwrap()
+            .l()
+            .unwrap();
 
-                let cls = JClass::from(cls);
+        let mut list_a = stream_to_vec(&mut env, stream_a).unwrap();
+        let list_b = stream_to_vec(&mut env, stream_b).unwrap();
+        list_a.extend(list_b);
 
-                let ctor_id = env.get_method_id(&cls, "<init>", "()V").unwrap();
-
-                let packet = env.new_object_unchecked(&cls, ctor_id, &[]).unwrap();
-
-                let _ = env
-                    .set_field(&packet, "do", "I", JValueGen::Int(2406))
-                    .expect("1245");
-
-                let _ = env
-                    .set_field(&packet, "if", "I", JValueGen::Int(68))
-                    .expect("12456");
-
-                let _ = env
-                    .set_field(&packet, "for", "I", JValueGen::Int(798))
-                    .expect("128845");
-
-
-                let class_name_jstr = env.new_string("ru.sky_drive.dw.od").unwrap();
-
-                let od_class = env
-                    .call_method(
-                        &launch_cl,
-                        "findClass",
-                        "(Ljava/lang/String;)Ljava/lang/Class;",
-                        &[JValue::Object(&class_name_jstr)],
-                    )
-                    .unwrap()
-                    .l()
-                    .unwrap();
-
-                let class = JClass::from(od_class);
-                let id = env.get_static_method_id(&class, "if", "(Lcpw/mods/fml/common/network/simpleimpl/IMessage;)V").unwrap();
-
-                let args = [jvalue { l: packet.as_raw() }];
-                for _ in 0..20 {
-                    if let Ok(_) = env.call_static_method_unchecked(
-                        &class,
-                        id,
-                        ReturnType::Primitive(Primitive::Void),
-                        &args,
-                    ) {
-                        tracing::info!("Packet sent");
-                    } else {
-                        tracing::error!("Failed to send packet");
-                    }
-                }
+        let mut seen = HashSet::new();
+        let mut filtered = Vec::with_capacity(list_a.len());
+        for s in list_a {
+            if s.contains('$') {
+                continue;
             }
-        } else {
-            tracing::error!("Failed to create packet");
+            if seen.insert(s.as_str().to_owned()) {
+                filtered.push(s);
+            }
         }
+
+        let joined = filtered.join("\n");
+
+        let out_path = Path::new("classes.txt");
+        std::fs::write(out_path, joined).unwrap();
+
+        tracing::info!("Wrote {}", out_path.display());
+
         Ok(())
     }
 
@@ -405,4 +387,32 @@ pub fn get_jvm() -> &'static JvmInfo {
         let _ = session.initialize();
         session
     })
+}
+
+fn stream_to_vec(env: &mut JNIEnv, stream: JObject) -> Result<Vec<String>, Error> {
+    let iter: JObject = env
+        .call_method(stream, "iterator", "()Ljava/util/Iterator;", &[])?
+        .l()?;
+
+    let mut out = Vec::new();
+
+    let has_next_sig = "()Z";
+    let next_sig = "()Ljava/lang/Object;";
+
+    while env
+        .call_method(&iter, "hasNext", has_next_sig, &[])?
+        .z()?
+    {
+        let obj: JObject = env.call_method(&iter, "next", next_sig, &[])?.l()?;
+
+        let jstr = JString::from(obj);
+        let rust_str = env
+            .get_string(&jstr)?
+            .to_string_lossy()
+            .into_owned();
+
+        out.push(rust_str);
+    }
+
+    Ok(out)
 }

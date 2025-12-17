@@ -62,7 +62,7 @@ impl SafeHMODULE {
     }
 }
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub struct SafeJMethodId(pub jmethodID);
 
 unsafe impl Send for SafeJMethodId {}

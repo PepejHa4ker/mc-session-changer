@@ -1,8 +1,8 @@
 use crate::{
-    graphics::renderer::UiState,
     graphics::icon_renderer::{render_clickable_icon_with_text, render_decorative_icon},
     graphics::svg_icons::SvgIconManager,
-    jvm::{get_jvm, SessionInfo}
+    jvm::{get_jvm, SessionInfo},
+    ui::UiState,
 };
 use egui::{Color32, RichText, TextEdit, Ui};
 

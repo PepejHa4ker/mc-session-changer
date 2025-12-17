@@ -5,6 +5,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicUsize, Ordering},
     sync::OnceLock
 };
+use crate::graphics::netlog::PacketStore;
 
 pub struct GlobalState {
     last_key_state: AtomicU32,
@@ -15,6 +16,9 @@ pub struct GlobalState {
     current_window: AtomicIsize,
     context: OnceLock<Mutex<Option<PayloadContext>>>,
     account_manager: OnceLock<Mutex<AccountManager>>,
+    packet_store: OnceLock<Mutex<PacketStore>>,
+    packet_paused: AtomicBool,
+
 }
 
 impl GlobalState {
@@ -28,6 +32,8 @@ impl GlobalState {
             current_window: AtomicIsize::new(0),
             context: OnceLock::new(),
             account_manager: OnceLock::new(),
+            packet_store: OnceLock::new(),
+            packet_paused: AtomicBool::new(false),
         }
     }
 
@@ -90,5 +96,19 @@ impl GlobalState {
 
     pub fn initialize_account_manager(&self) {
         self.account_manager.get_or_init(|| Mutex::new(AccountManager::new()));
+    }
+
+    pub fn get_packet_store(&self) -> &OnceLock<Mutex<PacketStore>> {
+        &self.packet_store
+    }
+    pub fn initialize_packet_store(&self) {
+        self.packet_store.get_or_init(|| Mutex::new(PacketStore::new(500)));
+    }
+
+    pub fn is_packet_paused(&self) -> bool {
+        self.packet_paused.load(Ordering::Acquire)
+    }
+    pub fn set_packet_paused(&self, v: bool) {
+        self.packet_paused.store(v, Ordering::Release)
     }
 }

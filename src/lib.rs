@@ -10,6 +10,7 @@ use winapi::{
     shared::minwindef::{DWORD, HINSTANCE, LPVOID},
     um::winnt::{DLL_PROCESS_ATTACH}
 };
+use crate::core::custom_payload::init_default_decoders;
 
 mod account;
 mod core;
@@ -40,7 +41,6 @@ unsafe extern "system" fn start_routine(_parameter: LPVOID) -> DWORD {
     if let Err(_) = initialize_logging() {
         return 1;
     }
-
     tracing::info!("Starting initialization sequence");
 
     if let Err(e) = initialize_opengl_hooks() {
@@ -52,7 +52,7 @@ unsafe extern "system" fn start_routine(_parameter: LPVOID) -> DWORD {
     tracing::info!("Minecraft session initialized");
 
     GlobalState::instance().initialize_account_manager();
-
+    init_default_decoders();
     loop {
         if SHOULD_UNLOAD.load(Ordering::Acquire) {
             tracing::info!("Shutdown signal received");

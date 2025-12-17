@@ -1,65 +1,66 @@
-use crate::hooks::jhook::HookCallback;
-use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JMethodID, JObject, JString, JValue};
+use crate::graphics::netlog::PacketDirection;
+use crate::hooks::jhook::{HookCallback, HookDecision};
+use crate::hooks::packet::utils::{
+    new_packet_buffer, packet_class_name, push_packet_log, read_all_bytes,
+};
+use jni::objects::{JClass, JMethodID, JObject, JString, JValue};
 use jni::sys::jvalue;
+use jni::JNIEnv;
 
 pub struct PacketWriteHook;
 
 impl HookCallback for PacketWriteHook {
-    unsafe fn call(
+    unsafe fn before(
         &self,
-        mut env: JNIEnv,
-        _this: JObject,
-        _class: JClass,
-        _original_method: JMethodID,
+        env: JNIEnv,
+        _this: &JObject,
+        _class: &JClass,
+        _orig: &JMethodID,
         args: &[jvalue],
-    ) -> Option<jvalue> {
-        let packet = JObject::from_raw(args[1].l);
+    ) -> HookDecision {
+        let packet: JObject = JObject::from_raw(args[1].l);
 
-        if let Err(e) = self.log_pre_encode(&mut env, &packet) {
+        // match self.should_block(&mut env, &packet) {
+        //     Ok(true) => {
+        //         tracing::info!("[BLOCK] Skipping outbound CustomPayload on channel 'dwcity'");
+        //         return HookDecision::Return(jvalue { l: ptr::null_mut() });
+        //     }
+        //     Ok(false) => {}
+        //     Err(e) => {
+        //         tracing::error!("should_block failed: {e}");
+        //     }
+        // }
+
+        let mut env_local = env.unsafe_clone();
+        if let Err(e) = self.log_pre_encode(&mut env_local, &packet) {
             tracing::error!("pre-encode log failed: {e}");
         }
-        None
+        HookDecision::CallOriginal
     }
 }
 
 impl PacketWriteHook {
-    unsafe fn log_pre_encode(&self, env: &mut JNIEnv, packet: &JObject) -> anyhow::Result<()> {
+    unsafe fn should_block(
+        &self,
+        env: &mut JNIEnv,
+        packet: &JObject,
+    ) -> anyhow::Result<bool> {
         if packet.is_null() {
-            return Ok(());
+            return Ok(false);
         }
 
         env.push_local_frame(64)?;
 
-        let cls_obj = env
-            .call_method(packet, "getClass", "()Ljava/lang/Class;", &[])?
-            .l()?;
-        let name_obj = env
-            .call_method(&cls_obj, "getName", "()Ljava/lang/String;", &[])?
-            .l()?;
-        let name_str: String = env.get_string(&JString::from(name_obj))?.into();
-
-        if name_str == "net.minecraft.network.play.client.C03PacketPlayer" {
+        let name_str = {
+            packet_class_name(env, packet)?
+        };
+        if name_str != "net.minecraft.network.play.client.C17PacketCustomPayload" {
             let _ = env.pop_local_frame(&JObject::null());
-            return Ok(());
+            return Ok(false);
         }
 
-        let unpooled = env.find_class("io/netty/buffer/Unpooled")?;
-        let bytebuf = env
-            .call_static_method(
-                &unpooled,
-                "buffer",
-                "(I)Lio/netty/buffer/ByteBuf;",
-                &[JValue::Int(256)],
-            )?
-            .l()?;
+        let packet_buffer = new_packet_buffer(env, 256)?;
 
-        let pb_cls = env.find_class("net/minecraft/network/PacketBuffer")?;
-        let packet_buffer = env.new_object(
-            &pb_cls,
-            "(Lio/netty/buffer/ByteBuf;)V",
-            &[JValue::Object(&bytebuf)],
-        )?;
 
         env.call_method(
             packet,
@@ -68,42 +69,60 @@ impl PacketWriteHook {
             &[JValue::Object(&packet_buffer)],
         )?;
 
-        let readable = env
-            .call_method(&bytebuf, "readableBytes", "()I", &[])?
-            .i()? as usize;
-        let mut preview: Vec<u8> = Vec::new();
-        if readable > 0 {
-            let dst: JByteArray = env.new_byte_array(readable as i32)?.into();
-            let reader_idx = env.call_method(&bytebuf, "readerIndex", "()I", &[])?.i()?;
-            env.call_method(
-                &bytebuf,
-                "getBytes",
-                "(I[B)Lio/netty/buffer/ByteBuf;",
-                &[JValue::Int(reader_idx), JValue::Object(&dst)],
-            )?;
-            let bytes = env.convert_byte_array(dst)?;
-            preview.extend_from_slice(&bytes);
-        }
+        let chan = env
+            .call_method(packet, "func_149559_c", "()Ljava/lang/String;", &[])?
+            .l()?;
 
-        // tracing::info!(
-        //     "[PRE-ENCODE] {}: len={} data={:02X?}",
-        //     name_str,
-        //     preview.len(),
-        //     &preview[..preview.len().min(32)]
-        // );
+        let string = JString::from(chan);
+        let chan: String = env.get_string(&string)?.into();
 
-        let _ = env.call_method(&bytebuf, "release", "()Z", &[]);
+        let _ = env.call_method(&packet_buffer, "release", "()Z", &[]);
         let _ = env.pop_local_frame(&JObject::null());
-        Ok(())
+
+        Ok(chan != "FML|HS")
     }
 
-    fn limit_str(s: &str, max: usize) -> String {
-        if s.len() <= max {
-            s.to_string()
-        } else {
-            let mut cut = s.chars().take(max).collect::<String>();
-            cut.push_str("…");
-            cut
+    unsafe fn log_pre_encode(
+        &self,
+        env: &mut JNIEnv,
+        packet: &JObject,
+    ) -> anyhow::Result<()> {
+        if packet.is_null() {
+            return Ok(());
         }
+
+        env.push_local_frame(64)?;
+
+        let name_str = {
+            packet_class_name(env, packet)?
+        };
+        if name_str == "net.minecraft.network.play.client.C03PacketPlayer" {
+            let _ = env.pop_local_frame(&JObject::null());
+            return Ok(());
+        }
+
+        let packet_buffer = new_packet_buffer(env, 256)?;
+
+        env.call_method(
+            packet,
+            "func_148840_b",
+            "(Lnet/minecraft/network/PacketBuffer;)V",
+            &[JValue::Object(&packet_buffer)],
+        )?;
+
+        let mut env_local = env.unsafe_clone();
+        let preview = read_all_bytes(&mut env_local, &packet_buffer)?;
+        push_packet_log(PacketDirection::Outbound, name_str.clone(), preview.clone());
+
+        tracing::debug!(
+            "[PRE-ENCODE] {}: len={} data={:02X?}",
+            name_str,
+            preview.len(),
+            &preview
+        );
+
+        let _ = env.call_method(&packet_buffer, "release", "()Z", &[]);
+        let _ = env.pop_local_frame(&JObject::null());
+        Ok(())
     }
 }

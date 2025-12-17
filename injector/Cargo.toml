@@ -20,4 +20,5 @@ winapi = { version = "0.3", features = [
     "minwinbase",
     "minwindef",
     "winnt",
+    "wincon"
 ] }

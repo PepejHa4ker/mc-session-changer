@@ -1,23 +1,101 @@
-use crate::jni_hook::{JNIHook_Attach, JNIHook_Detach, JNIHook_Init, JNIHook_Shutdown, JNIHookResult};
+use crate::jni_hook::{
+    JNIHook_Attach, JNIHook_Detach, JNIHook_Init, JNIHook_Shutdown, JNIHookResult,
+};
 use crate::utils::{SafeJClass, SafeJMethodId, SafePtr};
-use anyhow::{bail, Context, Result};
-use jni::sys::*;
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::ffi::{c_void, CString};
-use std::os::raw::c_void as raw_void;
-use std::ptr;
-use std::sync::{Arc, Mutex, OnceLock};
+use anyhow::{Context, Result, bail};
 use jni::objects::{JClass, JMethodID, JObject};
+use jni::sys::*;
 use libffi::{
     low as ffi_low,
-    raw as ffi_raw,
     middle::{Cif, Type},
+    raw as ffi_raw,
 };
+use once_cell::sync::Lazy;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{CString, c_void};
+use std::ops::Deref;
+use std::os::raw::c_void as raw_void;
+use std::ptr;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 pub static HOOK_REGISTRY: Lazy<Arc<Mutex<HookRegistry>>> =
     Lazy::new(|| Arc::new(Mutex::new(HookRegistry::new())));
-pub static HOOK_MANAGER: OnceLock<JNIHookManager> = OnceLock::new();
+static HOOK_RUNTIME: OnceLock<Mutex<HookRuntime>> = OnceLock::new();
+
+fn hook_runtime() -> &'static Mutex<HookRuntime> {
+    HOOK_RUNTIME.get_or_init(|| Mutex::new(HookRuntime::new()))
+}
+
+struct HookRuntime {
+    manager: Option<JNIHookManager>,
+    jvm: *mut JavaVM,
+    initialized: bool,
+}
+
+unsafe impl Send for HookRuntime {}
+unsafe impl Sync for HookRuntime {}
+
+impl HookRuntime {
+    const fn new() -> Self {
+        Self {
+            manager: None,
+            jvm: ptr::null_mut(),
+            initialized: false,
+        }
+    }
+
+    fn ensure_initialized(&mut self, jvm: *mut JavaVM) -> Result<()> {
+        if self.initialized && self.jvm == jvm {
+            return Ok(());
+        }
+
+        if self.initialized && self.jvm != jvm {
+            tracing::warn!("JNIHook reinitializing with a different JVM pointer");
+            self.teardown_state();
+        }
+
+        let init_result = unsafe { JNIHook_Init(jvm) };
+        match init_result {
+            JNIHookResult::JnihookOk => {
+                self.manager = Some(JNIHookManager::new(jvm));
+                self.jvm = jvm;
+                self.initialized = true;
+                Ok(())
+            }
+            JNIHookResult::JnihookErrAddJvmtiCaps => {
+                tracing::warn!(
+                    "JNIHook_Init reported AddJvmtiCaps failure, assuming capabilities already present"
+                );
+                self.manager = Some(JNIHookManager::new(jvm));
+                self.jvm = jvm;
+                self.initialized = true;
+                Ok(())
+            }
+            other => bail!("JNIHook_Init failed: {:?}", other),
+        }
+    }
+
+    fn teardown_state(&mut self) {
+        self.manager = None;
+        self.jvm = ptr::null_mut();
+        self.initialized = false;
+    }
+}
+
+pub struct HookManagerGuard<'a> {
+    runtime: MutexGuard<'a, HookRuntime>,
+}
+
+impl<'a> Deref for HookManagerGuard<'a> {
+    type Target = JNIHookManager;
+
+    fn deref(&self) -> &Self::Target {
+        self.runtime
+            .manager
+            .as_ref()
+            .expect("Hook runtime was not initialized")
+    }
+}
 
 pub struct HookRegistry {
     pub(crate) hooks: HashMap<SafeJMethodId, HookInfo>,
@@ -42,15 +120,43 @@ impl HookInfo {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum HookDecision {
+    CallOriginal,
+    Return(jvalue),
+}
+
+pub enum HookAfter {
+    Keep,
+    ReplaceRet(jvalue),
+    ReplaceRetAndClear(jvalue),
+    ClearException,
+}
+
 pub trait HookCallback {
-    unsafe fn call(
+    unsafe fn before(
         &self,
-        env: jni::JNIEnv,
-        this: JObject,
-        class: JClass,
-        original_method: JMethodID,
-        args: &[jvalue],
-    ) -> Option<jvalue>;
+        _env: jni::JNIEnv,
+        _this: &JObject,
+        _class: &JClass,
+        _original_method: &JMethodID,
+        _args: &[jvalue],
+    ) -> HookDecision {
+        HookDecision::CallOriginal
+    }
+
+    unsafe fn after(
+        &self,
+        _env: jni::JNIEnv,
+        _this: &JObject,
+        _class: &JClass,
+        _original_method: &JMethodID,
+        _args: &[jvalue],
+        _ret: jvalue,
+        _exception: jobject,
+    ) -> HookAfter {
+        HookAfter::Keep
+    }
 }
 
 impl HookRegistry {
@@ -69,13 +175,16 @@ pub struct JNIHookManager {
 }
 impl JNIHookManager {
     pub fn new(jvm: *mut JavaVM) -> Self {
-        Self { jvm: SafePtr::new(jvm) }
+        Self {
+            jvm: SafePtr::new(jvm),
+        }
     }
-    pub fn obtain(jvm: *mut JavaVM) -> &'static Self {
-        HOOK_MANAGER.get_or_init(|| unsafe {
-            JNIHook_Init(jvm);
-            Self::new(jvm)
-        })
+    pub fn obtain(jvm: *mut JavaVM) -> Result<HookManagerGuard<'static>> {
+        let mut runtime = hook_runtime()
+            .lock()
+            .expect("Hook runtime mutex was poisoned");
+        runtime.ensure_initialized(jvm)?;
+        Ok(HookManagerGuard { runtime })
     }
 
     pub unsafe fn hook_method<T: HookCallback + Send + Sync + 'static>(
@@ -85,26 +194,32 @@ impl JNIHookManager {
         method_signature: &str,
         callback: T,
     ) -> Result<()> {
-        let (class, method_id, is_static) = self.find_method(class_name, method_name, method_signature)?;
+        let (class, method_id, is_static) =
+            self.find_method(class_name, method_name, method_signature)?;
         let (tramp, native_hook_fn) = create_universal_trampoline(method_id, method_signature)?;
         let mut original_method: jmethodID = ptr::null_mut();
-        let result = JNIHook_Attach(method_id, native_hook_fn as *mut c_void, &mut original_method);
+        let result = JNIHook_Attach(
+            method_id,
+            native_hook_fn as *mut c_void,
+            &mut original_method,
+        );
         match result {
             JNIHookResult::JnihookOk => {
                 let mut registry = HOOK_REGISTRY.lock().expect("registry");
                 registry.hooks.insert(
                     SafeJMethodId(method_id),
-                    HookInfo::new(
-                        Arc::new(callback),
-                        is_static,
-                    ),
+                    HookInfo::new(Arc::new(callback), is_static),
                 );
-                registry.original_methods.insert(SafeJMethodId(method_id), SafeJMethodId(original_method));
-                registry.classes.insert(SafeJMethodId(method_id), SafeJClass(class));
+                registry
+                    .original_methods
+                    .insert(SafeJMethodId(method_id), SafeJMethodId(original_method));
+                registry
+                    .classes
+                    .insert(SafeJMethodId(method_id), SafeJClass(class));
                 registry.trampolines.insert(SafeJMethodId(method_id), tramp);
                 Ok(())
             }
-            _ => bail!("Failed to attach hook"),
+            other => bail!("Failed to attach hook: {:?}", other),
         }
     }
 
@@ -115,8 +230,14 @@ impl JNIHookManager {
             return None;
         }
         let field_name = CString::new("classLoader").ok()?;
-        let field_signature = CString::new("Lnet/minecraft/launchwrapper/LaunchClassLoader;").ok()?;
-        let field_id = (**env).GetStaticFieldID.unwrap()(env, launch_class, field_name.as_ptr(), field_signature.as_ptr());
+        let field_signature =
+            CString::new("Lnet/minecraft/launchwrapper/LaunchClassLoader;").ok()?;
+        let field_id = (**env).GetStaticFieldID.unwrap()(
+            env,
+            launch_class,
+            field_name.as_ptr(),
+            field_signature.as_ptr(),
+        );
         if field_id.is_null() {
             return None;
         }
@@ -141,14 +262,24 @@ impl JNIHookManager {
         }
         let method_name = CString::new("findClass").ok()?;
         let method_signature = CString::new("(Ljava/lang/String;)Ljava/lang/Class;").ok()?;
-        let find_class_method = (**env).GetMethodID.unwrap()(env, loader_class, method_name.as_ptr(), method_signature.as_ptr());
+        let find_class_method = (**env).GetMethodID.unwrap()(
+            env,
+            loader_class,
+            method_name.as_ptr(),
+            method_signature.as_ptr(),
+        );
         if find_class_method.is_null() {
             (**env).DeleteLocalRef.unwrap()(env, class_name_jstr);
             (**env).DeleteLocalRef.unwrap()(env, loader_class);
             return None;
         }
         let value = jvalue { l: class_name_jstr };
-        let class_obj = (**env).CallObjectMethodA.unwrap()(env, launch_class_loader, find_class_method, &value as *const jvalue);
+        let class_obj = (**env).CallObjectMethodA.unwrap()(
+            env,
+            launch_class_loader,
+            find_class_method,
+            &value as *const jvalue,
+        );
         (**env).DeleteLocalRef.unwrap()(env, class_name_jstr);
         (**env).DeleteLocalRef.unwrap()(env, loader_class);
         if class_obj.is_null() {
@@ -165,7 +296,11 @@ impl JNIHookManager {
     ) -> Result<(jclass, jmethodID, bool)> {
         let mut env: *mut JNIEnv = ptr::null_mut();
         let get_env = (**self.jvm.0).GetEnv.context("GetEnv is null")?;
-        get_env(self.jvm.0, &mut env as *mut _ as *mut *mut c_void, JNI_VERSION_1_8 as i32);
+        get_env(
+            self.jvm.0,
+            &mut env as *mut _ as *mut *mut c_void,
+            JNI_VERSION_1_8 as i32,
+        );
         if env.is_null() {
             bail!("Failed to get JNI environment");
         }
@@ -186,8 +321,15 @@ impl JNIHookManager {
         let method_name_cstr = CString::new(method_name)?;
         let method_sig_cstr = CString::new(method_signature)?;
 
-        let get_static = (**env).GetStaticMethodID.context("GetStaticMethodID is null")?;
-        let static_mid = get_static(env, class, method_name_cstr.as_ptr(), method_sig_cstr.as_ptr());
+        let get_static = (**env)
+            .GetStaticMethodID
+            .context("GetStaticMethodID is null")?;
+        let static_mid = get_static(
+            env,
+            class,
+            method_name_cstr.as_ptr(),
+            method_sig_cstr.as_ptr(),
+        );
         if !static_mid.is_null() {
             return Ok((class, static_mid, true));
         }
@@ -197,67 +339,155 @@ impl JNIHookManager {
         }
 
         let get_inst = (**env).GetMethodID.context("GetMethodID is null")?;
-        let inst_mid = get_inst(env, class, method_name_cstr.as_ptr(), method_sig_cstr.as_ptr());
+        let inst_mid = get_inst(
+            env,
+            class,
+            method_name_cstr.as_ptr(),
+            method_sig_cstr.as_ptr(),
+        );
         if inst_mid.is_null() {
             bail!(
-            "Method not found: {}::{} {}",
-            class_name, method_name, method_signature
-        );
+                "Method not found: {}::{} {}",
+                class_name,
+                method_name,
+                method_signature
+            );
         }
         Ok((class, inst_mid, false))
     }
 }
 
 pub unsafe fn shutdown() -> Result<()> {
-    match JNIHook_Shutdown() {
-        JNIHookResult::JnihookOk => Ok(()),
-        _ => bail!("JNIHook shutdown failed"),
+    let mut runtime = hook_runtime()
+        .lock()
+        .expect("Hook runtime mutex was poisoned");
+
+    if !runtime.initialized {
+        return Ok(());
+    }
+
+    let jvm_ptr = runtime.jvm;
+    let shutdown_res = shutdown_jnihook_with_attach(jvm_ptr);
+    if jvm_ptr.is_null() {
+        runtime.teardown_state();
+        return Ok(());
+    }
+
+
+    match shutdown_res {
+        JNIHookResult::JnihookOk => {
+            runtime.teardown_state();
+            Ok(())
+        }
+        other => bail!("JNIHook shutdown failed: {:?}", other),
     }
 }
 
-pub unsafe fn unhook_all() -> Result<()> {
+unsafe fn attach_env_for_cleanup(jvm: *mut JavaVM) -> (*mut JNIEnv, bool) {
     let mut env_ptr: *mut JNIEnv = ptr::null_mut();
-    if let Some(get_env) = (**HOOK_MANAGER.get().unwrap().jvm.0).GetEnv {
+    let mut attached_here = false;
+
+    if jvm.is_null() {
+        return (env_ptr, attached_here);
+    }
+
+    if let Some(get_env) = (**jvm).GetEnv {
         let rc = get_env(
-            HOOK_MANAGER.get().unwrap().jvm.0,
+            jvm,
             &mut env_ptr as *mut _ as *mut *mut c_void,
             JNI_VERSION_1_8 as i32,
         );
+
         if rc == JNI_EDETACHED {
-            if let Some(attach) = (**HOOK_MANAGER.get().unwrap().jvm.0).AttachCurrentThread {
-                let _ = attach(
-                    HOOK_MANAGER.get().unwrap().jvm.0,
+            if let Some(attach) = (**jvm).AttachCurrentThread {
+                let attach_rc = attach(
+                    jvm,
                     &mut env_ptr as *mut _ as *mut *mut c_void,
                     ptr::null_mut(),
                 );
+                if attach_rc == 0 {
+                    attached_here = true;
+                } else {
+                    env_ptr = ptr::null_mut();
+                }
             }
         }
     }
 
+    (env_ptr, attached_here)
+}
+
+unsafe fn detach_env_if_needed(jvm: *mut JavaVM, attached_here: bool) {
+    if attached_here {
+        if let Some(detach) = (**jvm).DetachCurrentThread {
+            let _ = detach(jvm);
+        }
+    }
+}
+
+unsafe fn shutdown_jnihook_with_attach(jvm: *mut JavaVM) -> JNIHookResult {
+    let (_env_ptr, attached_here) = attach_env_for_cleanup(jvm);
+    let res = JNIHook_Shutdown();
+    detach_env_if_needed(jvm, attached_here);
+    res
+}
+
+pub unsafe fn unhook_all() -> Result<()> {
+    let jvm_ptr = {
+        let runtime = hook_runtime()
+            .lock()
+            .expect("Hook runtime mutex was poisoned");
+        if !runtime.initialized || runtime.jvm.is_null() {
+            return Ok(());
+        }
+        runtime.jvm
+    };
+
+    let (mut env_ptr, attached_here) = attach_env_for_cleanup(jvm_ptr);
+
     let mut registry = HOOK_REGISTRY.lock().expect("registry");
-    for (method, _) in registry.hooks.iter() {
-        let r = JNIHook_Detach(method.0);
-        match r {
+    let mut failed: HashSet<SafeJMethodId> = HashSet::new();
+
+    for method in registry.hooks.keys() {
+        match JNIHook_Detach(method.0) {
             JNIHookResult::JnihookOk => {}
             other => {
                 tracing::error!("JNIHook_Detach({:p}) => {:?}", method.0, other);
+                failed.insert(method.clone());
             }
         }
     }
 
-    for (_, tramp) in registry.trampolines.drain() {
-        tramp.destroy();
-    }
-    registry.hooks.clear();
-    registry.original_methods.clear();
-    for (_mid, cls) in registry.classes.drain() {
-        if !env_ptr.is_null() && !cls.0.is_null() {
-            unsafe {
-                (**env_ptr).DeleteGlobalRef.unwrap()(env_ptr, cls.0 as jobject);
-            }
+    let trampolines = std::mem::take(&mut registry.trampolines);
+    for (mid, tramp) in trampolines {
+        if failed.contains(&mid) {
+            registry.trampolines.insert(mid, tramp);
+        } else {
+            tramp.destroy();
         }
     }
-    Ok(())
+
+    registry.hooks.retain(|mid, _| failed.contains(mid));
+    registry
+        .original_methods
+        .retain(|mid, _| failed.contains(mid));
+
+    let classes = std::mem::take(&mut registry.classes);
+    for (mid, cls) in classes {
+        if failed.contains(&mid) {
+            registry.classes.insert(mid, cls);
+        } else if !env_ptr.is_null() && !cls.0.is_null() {
+            (**env_ptr).DeleteGlobalRef.unwrap()(env_ptr, cls.0 as jobject);
+        }
+    }
+
+    detach_env_if_needed(jvm_ptr, attached_here);
+
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        bail!("Failed to detach {} JNI hook(s)", failed.len())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -410,14 +640,30 @@ unsafe extern "C" fn raw_trampoline(
                 let v = *(ap as *const jboolean);
                 jvalue { z: v as u8 }
             }
-            JTypeKind::Byte => jvalue { b: *(ap as *const jbyte) },
-            JTypeKind::Char => jvalue { c: *(ap as *const jchar) },
-            JTypeKind::Short => jvalue { s: *(ap as *const jshort) },
-            JTypeKind::Int => jvalue { i: *(ap as *const jint) },
-            JTypeKind::Long => jvalue { j: *(ap as *const jlong) },
-            JTypeKind::Float => jvalue { f: *(ap as *const jfloat) },
-            JTypeKind::Double => jvalue { d: *(ap as *const jdouble) },
-            JTypeKind::Object => jvalue { l: *(ap as *const jobject) },
+            JTypeKind::Byte => jvalue {
+                b: *(ap as *const jbyte),
+            },
+            JTypeKind::Char => jvalue {
+                c: *(ap as *const jchar),
+            },
+            JTypeKind::Short => jvalue {
+                s: *(ap as *const jshort),
+            },
+            JTypeKind::Int => jvalue {
+                i: *(ap as *const jint),
+            },
+            JTypeKind::Long => jvalue {
+                j: *(ap as *const jlong),
+            },
+            JTypeKind::Float => jvalue {
+                f: *(ap as *const jfloat),
+            },
+            JTypeKind::Double => jvalue {
+                d: *(ap as *const jdouble),
+            },
+            JTypeKind::Object => jvalue {
+                l: *(ap as *const jobject),
+            },
             JTypeKind::Void => jvalue { l: ptr::null_mut() },
         };
         jargs.push(jv);
@@ -428,34 +674,75 @@ unsafe extern "C" fn raw_trampoline(
             Some(h) => h,
             None => return,
         };
-        let class = registry.classes.get(&ud.method_id).map(|c| c.0).unwrap_or(ptr::null_mut());
-        let original = registry.original_methods.get(&ud.method_id).map(|m| m.0).unwrap_or(ptr::null_mut());
+        let class = registry
+            .classes
+            .get(&ud.method_id)
+            .map(|c| c.0)
+            .unwrap_or(ptr::null_mut());
+        let original = registry
+            .original_methods
+            .get(&ud.method_id)
+            .map(|m| m.0)
+            .unwrap_or(ptr::null_mut());
         (Arc::clone(&h.callback), h.is_static, class, original)
     };
 
-
-    let safe_env = jni::JNIEnv::from_raw(env).expect("failed to get JNIEnv from raw pointer");
+    let safe_env = jni::JNIEnv::from_raw(env).expect("JNIEnv from raw");
     let this_obj = JObject::from_raw(*this_ptr);
     let class_obj = JClass::from_raw(class);
     let original_method = JMethodID::from_raw(original);
-    let ret_opt = cb.call(safe_env, this_obj, class_obj, original_method, &jargs);
-    let result_jv = if let Some(v) = ret_opt {
-        v
-    } else {
-        call_original(env, *this_ptr, class, original, &jargs, is_static, &ud.sig)
-    };
 
+    let decision = cb.before(
+        safe_env.unsafe_clone(),
+        &this_obj,
+        &class_obj,
+        &original_method,
+        &jargs,
+    );
+    let mut ret_jv = match decision {
+        HookDecision::CallOriginal => {
+            call_original(env, *this_ptr, class, original, &jargs, is_static, &ud.sig)
+        }
+        HookDecision::Return(v) => v,
+    };
+    let pending_exc = take_pending_exception(env);
+
+    match cb.after(
+        safe_env.unsafe_clone(),
+        &this_obj,
+        &class_obj,
+        &original_method,
+        &jargs,
+        ret_jv,
+        pending_exc,
+    ) {
+        HookAfter::Keep => {
+            if !pending_exc.is_null() {
+                (**env).Throw.unwrap()(env, pending_exc);
+            }
+        }
+        HookAfter::ReplaceRet(newv) => {
+            ret_jv = newv;
+            if !pending_exc.is_null() {
+                (**env).Throw.unwrap()(env, pending_exc);
+            }
+        }
+        HookAfter::ReplaceRetAndClear(newv) => {
+            ret_jv = newv;
+        }
+        HookAfter::ClearException => {}
+    }
     match ud.sig.ret {
-        JTypeKind::Void    => {}
-        JTypeKind::Boolean => *(result as *mut jboolean) = result_jv.z as jboolean,
-        JTypeKind::Byte    => *(result as *mut jbyte)    = result_jv.b,
-        JTypeKind::Char    => *(result as *mut jchar)    = result_jv.c,
-        JTypeKind::Short   => *(result as *mut jshort)   = result_jv.s,
-        JTypeKind::Int     => *(result as *mut jint)     = result_jv.i,
-        JTypeKind::Long    => *(result as *mut jlong)    = result_jv.j,
-        JTypeKind::Float   => *(result as *mut jfloat)   = result_jv.f,
-        JTypeKind::Double  => *(result as *mut jdouble)  = result_jv.d,
-        JTypeKind::Object  => *(result as *mut jobject)  = result_jv.l,
+        JTypeKind::Void => {}
+        JTypeKind::Boolean => *(result as *mut jboolean) = ret_jv.z as jboolean,
+        JTypeKind::Byte => *(result as *mut jbyte) = ret_jv.b,
+        JTypeKind::Char => *(result as *mut jchar) = ret_jv.c,
+        JTypeKind::Short => *(result as *mut jshort) = ret_jv.s,
+        JTypeKind::Int => *(result as *mut jint) = ret_jv.i,
+        JTypeKind::Long => *(result as *mut jlong) = ret_jv.j,
+        JTypeKind::Float => *(result as *mut jfloat) = ret_jv.f,
+        JTypeKind::Double => *(result as *mut jdouble) = ret_jv.d,
+        JTypeKind::Object => *(result as *mut jobject) = ret_jv.l,
     }
 }
 
@@ -529,18 +816,59 @@ unsafe fn call_original(
             if is_static {
                 (**env).CallStaticVoidMethodA.unwrap()(env, class, method, args.as_ptr());
             } else {
-                (**env).CallNonvirtualVoidMethodA.unwrap()(env, this_or_cls, class, method, args.as_ptr());
+                (**env).CallNonvirtualVoidMethodA.unwrap()(
+                    env,
+                    this_or_cls,
+                    class,
+                    method,
+                    args.as_ptr(),
+                );
             }
             jvalue { l: ptr::null_mut() }
         }
-        JTypeKind::Boolean => call_num!(CallNonvirtualBooleanMethodA, CallStaticBooleanMethodA, z, jboolean),
+        JTypeKind::Boolean => call_num!(
+            CallNonvirtualBooleanMethodA,
+            CallStaticBooleanMethodA,
+            z,
+            jboolean
+        ),
         JTypeKind::Byte => call_num!(CallNonvirtualByteMethodA, CallStaticByteMethodA, b, jbyte),
         JTypeKind::Char => call_num!(CallNonvirtualCharMethodA, CallStaticCharMethodA, c, jchar),
-        JTypeKind::Short => call_num!(CallNonvirtualShortMethodA, CallStaticShortMethodA, s, jshort),
+        JTypeKind::Short => call_num!(
+            CallNonvirtualShortMethodA,
+            CallStaticShortMethodA,
+            s,
+            jshort
+        ),
         JTypeKind::Int => call_num!(CallNonvirtualIntMethodA, CallStaticIntMethodA, i, jint),
         JTypeKind::Long => call_num!(CallNonvirtualLongMethodA, CallStaticLongMethodA, j, jlong),
-        JTypeKind::Float => call_num!(CallNonvirtualFloatMethodA, CallStaticFloatMethodA, f, jfloat),
-        JTypeKind::Double => call_num!(CallNonvirtualDoubleMethodA, CallStaticDoubleMethodA, d, jdouble),
-        JTypeKind::Object => call_num!(CallNonvirtualObjectMethodA, CallStaticObjectMethodA, l, jobject),
+        JTypeKind::Float => call_num!(
+            CallNonvirtualFloatMethodA,
+            CallStaticFloatMethodA,
+            f,
+            jfloat
+        ),
+        JTypeKind::Double => call_num!(
+            CallNonvirtualDoubleMethodA,
+            CallStaticDoubleMethodA,
+            d,
+            jdouble
+        ),
+        JTypeKind::Object => call_num!(
+            CallNonvirtualObjectMethodA,
+            CallStaticObjectMethodA,
+            l,
+            jobject
+        ),
+    }
+}
+
+unsafe fn take_pending_exception(env: *mut JNIEnv) -> jobject {
+    if (**env).ExceptionCheck.unwrap()(env) == JNI_TRUE {
+        let thr = (**env).ExceptionOccurred.unwrap()(env);
+        (**env).ExceptionClear.unwrap()(env);
+        thr
+    } else {
+        ptr::null_mut()
     }
 }

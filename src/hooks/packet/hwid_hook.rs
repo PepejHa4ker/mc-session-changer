@@ -1,38 +1,30 @@
-use crate::hooks::jhook::HookCallback;
-use crate::utils::generate_hwid;
-use jni::objects::{JClass, JMethodID, JObject, JString, JValue};
-use jni::sys::{jvalue};
+use crate::core::hwid::HWID_SPOOFER;
+use crate::hooks::jhook::{HookCallback, HookDecision};
+use jni::objects::{JClass, JMethodID, JObject};
+use jni::sys::jvalue;
+use std::mem;
 
 pub struct HwidHook;
 
 impl HookCallback for HwidHook {
-    unsafe fn call(
+    unsafe fn before(
         &self,
         mut env: jni::JNIEnv,
-        _: JObject,
-        _: JClass,
-        _: JMethodID,
+        _this: &JObject,
+        _class: &JClass,
+        _orig: &JMethodID,
         args: &[jvalue],
-    ) -> Option<jvalue> {
+    ) -> HookDecision {
         tracing::info!("Hwid bytes called.");
 
         let data_output = JObject::from_raw(args[0].l);
-        let hwid = generate_hwid();
 
-        for h in hwid {
-            let to_write = format!("\u{1}{}", h);
-
-            let jstr = env.new_string(to_write).expect("idc");
-            let jstr_obj = jstr.into();
-
-            env.call_method(
-                &data_output,
-                "writeUTF",
-                "(Ljava/lang/String;)V",
-                &[JValue::Object(&jstr_obj)],
-            )
-                .expect("Failed to call writeUTF");
+        if let Err(e) = HWID_SPOOFER.write_hwid(&mut env, &data_output) {
+            tracing::warn!("Failed to write spoofed HWID: {e:#}");
+        } else {
+            HWID_SPOOFER.notify_success();
         }
-        Some(std::mem::zeroed())
+
+        HookDecision::Return(mem::zeroed())
     }
 }

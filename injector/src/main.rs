@@ -14,6 +14,7 @@ use winapi::um::libloaderapi::{GetModuleHandleW, GetProcAddress};
 use winapi::um::memoryapi::{VirtualAllocEx, WriteProcessMemory};
 use winapi::um::processthreadsapi::{CreateRemoteThread, OpenProcess};
 use winapi::um::synchapi::WaitForSingleObject;
+use winapi::um::wincon::FreeConsole;
 use winapi::um::winnt::{
     MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION,
     PROCESS_VM_OPERATION, PROCESS_VM_WRITE, SYNCHRONIZE,
@@ -63,7 +64,7 @@ fn list_processes() -> Vec<ProcItem> {
 
 fn inject_from_memory(pid: u32, dll_data: &[u8]) -> Result<()> {
     let temp_dir = std::env::temp_dir();
-    let temp_dll_path = temp_dir.join(DEFAULT_DLL_NAME);
+    let temp_dll_path = temp_dir.join(format!("{}{}",DEFAULT_DLL_NAME,pid));
 
     {
         let mut file = std::fs::File::create(&temp_dll_path)?;
@@ -229,6 +230,9 @@ impl AppState {
 }
 
 fn main() -> Result<()> {
+    unsafe {
+        FreeConsole();
+    }
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([550.0, 650.0])

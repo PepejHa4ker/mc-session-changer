@@ -1,11 +1,11 @@
 use crate::{
-    input::clipboard::ClipboardManager,
-    graphics::context::{AppTab, PayloadContext},
     core::state::GlobalState,
-    input::window_proc::window_proc,
-    utils::SafeGLContext,
+    graphics::context::{AppTab, PayloadContext},
     graphics::svg_icons::SvgIconManager,
-    ui::notification_manager::NotificationManager
+    input::clipboard::ClipboardManager,
+    input::window_proc::window_proc,
+    ui::notification_manager::NotificationManager,
+    utils::SafeGLContext,
 };
 use egui::Context;
 use glow::Context as GlowContext;
@@ -14,7 +14,7 @@ use winapi::{
     shared::windef::HDC,
     um::libloaderapi::{GetModuleHandleA, GetProcAddress},
     um::wingdi::{wglCreateContext, wglGetCurrentContext, wglMakeCurrent, wglShareLists},
-    um::winuser::{GetClientRect, SetWindowLongPtrW, WindowFromDC, GWLP_WNDPROC}
+    um::winuser::{GWLP_WNDPROC, GetClientRect, SetWindowLongPtrW, WindowFromDC},
 };
 
 pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> {
@@ -28,6 +28,7 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
     }
 
     GlobalState::instance().set_current_window(window as isize);
+    GlobalState::instance().initialize_packet_store();
 
     let mut dimensions = winapi::shared::windef::RECT::default();
     GetClientRect(window, &mut dimensions);
@@ -68,11 +69,10 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
     let glow_context = std::sync::Arc::new(glow_context);
     let egui_ctx = Context::default();
 
-    let painter = egui_glow::Painter::new(glow_context.clone(), "", None, false)
-        .map_err(|e| {
-            winapi::um::wingdi::wglDeleteContext(our_context);
-            format!("Failed to create painter: {}", e)
-        })?;
+    let painter = egui_glow::Painter::new(glow_context.clone(), "", None, false).map_err(|e| {
+        winapi::um::wingdi::wglDeleteContext(our_context);
+        format!("Failed to create painter: {}", e)
+    })?;
 
     if wglMakeCurrent(hdc, game_context) == 0 {
         winapi::um::wingdi::wglDeleteContext(our_context);
@@ -115,6 +115,40 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
         edit_access_token: String::new(),
         edit_session_type: String::new(),
         edit_original_name: String::new(),
+
+        packet_filter: String::new(),
+        packet_show_inbound: true,
+        packet_show_outbound: true,
+        packet_autoscroll: true,
+        packet_paused: false,
+        packets_detached: false,
+        packets_window_open: false,
+        selected_packet_id: None,
+        packet_only_pinned: false,
+        packet_limit_count: 500,
+        packet_autoclear_oldest: true,
+        packet_filter_profiles: Vec::new(),
+        packet_profile_new_name: String::new(),
+        packet_profile_new_query: String::new(),
+        packet_show_only_new: false,
+        packet_last_seen_id: 0,
+        packet_secondary_selected_id: None,
+        packet_triggers: Vec::new(),
+        packet_trigger_input: String::new(),
+        packet_tag_editor: String::new(),
+        packet_color_hex: String::from("#ffaa00"),
+        packet_export_limit: 500,
+        packet_import_buffer: String::new(),
+
+        search_query: String::new(),
+        selected_class: None,
+        is_loading: false,
+        error_message: None,
+        detached: false,
+        window_open: false,
+        expand_fields: false,
+        expand_methods: false,
+        member_search_query: String::new(),
     })
 }
 

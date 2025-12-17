@@ -1,14 +1,14 @@
+use crate::{
+    graphics::context::{PayloadContext},
+    ui::main_window::render_main_window,
+};
+use crate::ui::state::UiState;
+use egui::{Pos2, RawInput, Vec2};
 use std::time::{Duration, Instant};
 use winapi::{
-    um::winuser::{WindowFromDC, GetClientRect},
     shared::windef::{HDC, RECT},
-    um::wingdi::{wglMakeCurrent}
-};
-use egui::{RawInput, Pos2, Vec2};
-use crate::{
-    graphics::context::{PayloadContext, AppTab},
-    ui::main_window::render_main_window,
-    ui::notification_manager::NotificationManager
+    um::wingdi::wglMakeCurrent,
+    um::winuser::{GetClientRect, WindowFromDC},
 };
 
 pub fn render_frame(context: &mut PayloadContext, hdc: HDC) -> Result<(), String> {
@@ -97,7 +97,7 @@ fn render_egui_frame(context: &mut PayloadContext, width: u32, height: u32) -> R
         new_player_id: &mut context.new_player_id,
         new_access_token: &mut context.new_access_token,
         new_session_type: &mut context.new_session_type,
-        notification_manager: &mut context.notification_manager,
+        notification_manager: &context.notification_manager,
         clipboard: &mut context.clipboard,
         selected_tab: &mut context.selected_tab,
         account_name_input: &mut context.account_name_input,
@@ -115,6 +115,39 @@ fn render_egui_frame(context: &mut PayloadContext, width: u32, height: u32) -> R
         edit_access_token: &mut context.edit_access_token,
         edit_session_type: &mut context.edit_session_type,
         edit_original_name: &mut context.edit_original_name,
+        packet_filter: &mut context.packet_filter,
+        packet_show_inbound: &mut context.packet_show_inbound,
+        packet_show_outbound: &mut context.packet_show_outbound,
+        packet_autoscroll: &mut context.packet_autoscroll,
+        packet_paused: &mut context.packet_paused,
+        packets_detached: &mut context.packets_detached,
+        packets_window_open: &mut context.packets_window_open,
+        selected_packet_id: &mut context.selected_packet_id,
+        packet_only_pinned: &mut context.packet_only_pinned,
+        packet_limit_count: &mut context.packet_limit_count,
+        packet_autoclear_oldest: &mut context.packet_autoclear_oldest,
+        packet_filter_profiles: &mut context.packet_filter_profiles,
+        packet_profile_new_name: &mut context.packet_profile_new_name,
+        packet_profile_new_query: &mut context.packet_profile_new_query,
+        packet_show_only_new: &mut context.packet_show_only_new,
+        packet_last_seen_id: &mut context.packet_last_seen_id,
+        packet_secondary_selected_id: &mut context.packet_secondary_selected_id,
+        packet_triggers: &mut context.packet_triggers,
+        packet_trigger_input: &mut context.packet_trigger_input,
+        packet_tag_editor: &mut context.packet_tag_editor,
+        packet_color_hex: &mut context.packet_color_hex,
+        packet_export_limit: &mut context.packet_export_limit,
+        packet_import_buffer: &mut context.packet_import_buffer,
+
+        search_query: &mut context.search_query,
+        selected_class: &mut context.selected_class,
+        is_loading: &mut context.is_loading,
+        error_message: &mut context.error_message,
+        detached: &mut context.detached,
+        window_open: &mut context.window_open,
+        expand_fields: &mut context.expand_fields,
+        expand_methods: &mut context.expand_methods,
+        member_search_query: &mut context.member_search_query,
     };
 
     let mut icon_manager = std::mem::take(&mut context.icon_manager);
@@ -132,7 +165,11 @@ fn render_egui_frame(context: &mut PayloadContext, width: u32, height: u32) -> R
     context.icon_manager = icon_manager;
 
     let screen_size = Vec2::new(context.dimensions[0] as f32, context.dimensions[1] as f32);
-    context.notification_manager.render_in_context(&context.egui_ctx, &mut context.icon_manager, screen_size);
+    context.notification_manager.render_in_context(
+        &context.egui_ctx,
+        &mut context.icon_manager,
+        screen_size,
+    );
 
     let clipped_primitives = context.egui_ctx.tessellate(shapes, pixels_per_point);
 
@@ -144,29 +181,4 @@ fn render_egui_frame(context: &mut PayloadContext, width: u32, height: u32) -> R
     );
 
     Ok(())
-}
-
-pub struct UiState<'a> {
-    pub new_username: &'a mut String,
-    pub new_player_id: &'a mut String,
-    pub new_access_token: &'a mut String,
-    pub new_session_type: &'a mut String,
-    pub notification_manager: &'a NotificationManager,
-    pub clipboard: &'a mut crate::input::clipboard::ClipboardManager,
-    pub selected_tab: &'a mut AppTab,
-    pub account_name_input: &'a mut String,
-    pub selected_account: &'a mut Option<String>,
-    pub show_manual_input_dialog: &'a mut bool,
-    pub manual_account_name: &'a mut String,
-    pub manual_username: &'a mut String,
-    pub manual_player_id: &'a mut String,
-    pub manual_access_token: &'a mut String,
-    pub manual_session_type: &'a mut String,
-    pub show_edit_dialog: &'a mut bool,
-    pub edit_account_name: &'a mut String,
-    pub edit_username: &'a mut String,
-    pub edit_player_id: &'a mut String,
-    pub edit_access_token: &'a mut String,
-    pub edit_session_type: &'a mut String,
-    pub edit_original_name: &'a mut String,
 }

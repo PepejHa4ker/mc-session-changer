@@ -6,8 +6,6 @@ use ecb::Encryptor;
 use rand::distributions::Alphanumeric;
 use rand::prelude::SliceRandom;
 use rand::{random, Rng};
-use std::io;
-use std::io::Write;
 
 type DesEcbEnc = Encryptor<Des>;
 const VENDORS: &[(&str, u16)] = &[("NVIDIA", 0x10DE), ("AMD", 0x1002)];
