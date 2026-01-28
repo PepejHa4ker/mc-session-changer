@@ -1,11 +1,11 @@
 use crate::hooks::jhook::JNIHookManager;
+use crate::mappings::{classes, signatures};
 use anyhow::Result;
 use jni::sys::JavaVM;
-use crate::hooks::packet::chat_hook::ChatHook;
-use crate::hooks::packet::hwid_hook::HwidHook;
 use crate::hooks::packet::mod_list_hook::ModListHook;
 use crate::hooks::packet::packet_read_hook::InboundOutListTap;
 use crate::hooks::packet::packet_write_hook::PacketWriteHook;
+use crate::hooks::packet::hwid_hook::HwidHook;
 
 pub mod jhook;
 pub mod opengl;
@@ -31,28 +31,29 @@ pub unsafe fn setup_jni_hooks(jvm: *mut JavaVM) -> Result<()> {
     hook_entry!(
         manager,
         "PacketWriter",
-        "net/minecraft/util/MessageSerializer",
+        classes::NETTY_PACKET_ENCODER,
         "encode",
-        "(Lio/netty/channel/ChannelHandlerContext;Lnet/minecraft/network/Packet;Lio/netty/buffer/ByteBuf;)V",
+        signatures::PACKET_ENCODER_ENCODE,
         || PacketWriteHook
     );
 
     hook_entry!(
         manager,
         "PacketReader",
-        "net/minecraft/util/MessageDeserializer",
+        classes::NETTY_PACKET_DECODER,
         "decode",
-        "(Lio/netty/channel/ChannelHandlerContext;Lio/netty/buffer/ByteBuf;Ljava/util/List;)V",
+        signatures::PACKET_DECODER_DECODE,
         || InboundOutListTap
     );
 
+    // #[cfg(feature = "mc_1_7_10")]
     // hook_entry!(
     //     manager,
-    //     "HWID::writeData",
-    //     "ru/sky_drive/dw/pG",
-    //     "do",
-    //     "(Ljava/io/DataOutput;)V",
-    //     || HwidHook
+    //     "FMLHandshakeMessage$ModList::toBytes",
+    //     classes::FML_MOD_LIST_MESSAGE,
+    //     "toBytes",
+    //     "(Lio/netty/buffer/ByteBuf;)V",
+    //     || ModListHook
     // );
 
     hook_entry!(
@@ -63,14 +64,14 @@ pub unsafe fn setup_jni_hooks(jvm: *mut JavaVM) -> Result<()> {
         "()Ljava/util/List;",
         || ModListHook
     );
-
     hook_entry!(
         manager,
-        "Chat::printChatMessage",
-        "net/minecraft/client/gui/GuiNewChat",
-        "func_146227_a",
-        "(Lnet/minecraft/util/IChatComponent;)V",
-        || ChatHook
+        "pG::do (writeHwid)",
+        classes::PG_HWID,
+        "do",
+        "(Ljava/io/DataOutput;)V",
+        || HwidHook
     );
+
     Ok(())
 }

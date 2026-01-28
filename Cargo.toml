@@ -14,6 +14,11 @@ members = [
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = ["mc_1_7_10"]
+mc_1_7_10 = []
+mc_1_12_2 = []
+
 [dependencies]
 anyhow = "1.0.95"
 jni = "0.21.1"
@@ -43,6 +48,11 @@ libffi = "3"
 time = "0.3.44"
 uuid = { version = "1.18.1", features = ["v4"] }
 paste = "1.0.15"
+reqwest = { version = "0.12", features = ["json"] }
+rsa = { version = "0.9", features = ["std"] }
+sha1 = "0.10"
+hex = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync"] }
 
 
 [lints.rust]

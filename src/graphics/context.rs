@@ -39,6 +39,7 @@ pub struct PayloadContext {
     pub manual_player_id: String,
     pub manual_access_token: String,
     pub manual_session_type: String,
+    pub manual_password: String,
 
     pub show_edit_dialog: bool,
     pub edit_account_name: String,
@@ -46,7 +47,9 @@ pub struct PayloadContext {
     pub edit_player_id: String,
     pub edit_access_token: String,
     pub edit_session_type: String,
+    pub edit_password: String,
     pub edit_original_name: String,
+    pub auth_in_progress: bool,
 
     pub packet_filter: String,
     pub packet_show_inbound: bool,

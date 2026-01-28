@@ -34,16 +34,17 @@ impl SoundNotification {
             return Ok(());
         }
 
-        let resource_location_class = jvm
-            .forge_find_class(env, "net/minecraft/util/ResourceLocation")
+        let sound_events_class = jvm
+            .forge_find_class(env, "net/minecraft/init/SoundEvents")
             .unwrap();
 
-        let sound_name = env.new_string("random.orb")?;
-        let resource_location = env.new_object(
-            resource_location_class,
-            "(Ljava/lang/String;)V",
-            &[JValue::Object(&JObject::from(sound_name))],
-        )?;
+        let sound_event = env
+            .get_static_field(
+                sound_events_class,
+                "field_187802_bS",
+                "Lnet/minecraft/util/SoundEvent;",
+            )?
+            .l()?;
 
         let sound_record_class = jvm
             .forge_find_class(env, "net/minecraft/client/audio/PositionedSoundRecord")
@@ -52,9 +53,9 @@ impl SoundNotification {
         let sound_record = env
             .call_static_method(
                 sound_record_class,
-                "func_147673_a",
-                "(Lnet/minecraft/util/ResourceLocation;)Lnet/minecraft/client/audio/PositionedSoundRecord;",
-                &[JValue::Object(&resource_location)],
+                "func_184371_a",
+                "(Lnet/minecraft/util/SoundEvent;F)Lnet/minecraft/client/audio/PositionedSoundRecord;",
+                &[JValue::Object(&sound_event), JValue::Float(1.0)],
             )?
             .l()?;
 

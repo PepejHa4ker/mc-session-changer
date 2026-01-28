@@ -13,11 +13,14 @@ use winapi::{
 use crate::core::custom_payload::init_default_decoders;
 
 mod account;
+mod async_runtime;
+mod auth;
 mod core;
 mod graphics;
 mod hooks;
 mod input;
 mod jvm;
+mod mappings;
 mod ui;
 mod utils;
 mod jni_hook;

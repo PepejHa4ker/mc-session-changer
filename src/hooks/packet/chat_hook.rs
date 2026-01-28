@@ -1,4 +1,5 @@
 use crate::hooks::jhook::{HookAfter, HookCallback};
+use crate::mappings::methods;
 use anyhow::Context;
 use jni::JNIEnv;
 use jni::objects::*;
@@ -55,13 +56,13 @@ unsafe fn get_chat_text(env: &mut JNIEnv, chat_component: &JObject) -> anyhow::R
     let text = env
         .call_method(
             chat_component,
-            "func_150260_c",
+            methods::CHAT_GET_TEXT,
             "()Ljava/lang/String;",
             &[],
         )
-        .context("call func_150260_c")?
+        .context("call chat get text")?
         .l()
-        .context("func_150260_c returned null")?;
+        .context("chat get text returned null")?;
 
     if text.is_null() {
         return Ok(String::new());

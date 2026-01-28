@@ -11,6 +11,8 @@ use crate::jvm::SessionInfo;
 pub struct StoredAccount {
     pub name: String,
     pub username: String,
+    #[serde(default)]
+    pub password: String,
     pub player_id: String,
     pub access_token: String,
     pub session_type: String,
@@ -20,6 +22,10 @@ pub struct StoredAccount {
 
 impl StoredAccount {
     pub fn new(name: String, session: SessionInfo) -> Self {
+        Self::new_with_password(name, session, String::new())
+    }
+
+    pub fn new_with_password(name: String, session: SessionInfo, password: String) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -28,6 +34,7 @@ impl StoredAccount {
         Self {
             name,
             username: session.username,
+            password,
             player_id: session.player_id,
             access_token: session.access_token,
             session_type: session.session_type,
@@ -158,11 +165,15 @@ impl AccountManager {
     }
 
     pub fn add_account(&mut self, name: String, session: SessionInfo) -> Result<(), String> {
+        self.add_account_with_password(name, session, String::new())
+    }
+
+    pub fn add_account_with_password(&mut self, name: String, session: SessionInfo, password: String) -> Result<(), String> {
         if self.storage.accounts.contains_key(&name) {
             return Err("Account with this name already exists".to_string());
         }
 
-        let account = StoredAccount::new(name.clone(), session);
+        let account = StoredAccount::new_with_password(name.clone(), session, password);
         self.storage.accounts.insert(name, account);
         self.save_accounts()?;
 
@@ -186,11 +197,30 @@ impl AccountManager {
 
 
     pub fn update_account(&mut self, name: &str, session: SessionInfo) -> Result<(), String> {
+        self.update_account_with_password(name, session, None)
+    }
+
+    pub fn update_account_with_password(&mut self, name: &str, session: SessionInfo, password: Option<String>) -> Result<(), String> {
         if let Some(account) = self.storage.accounts.get_mut(name) {
             account.username = session.username;
             account.player_id = session.player_id;
             account.access_token = session.access_token;
             account.session_type = session.session_type;
+            if let Some(pwd) = password {
+                account.password = pwd;
+            }
+            account.update_last_used();
+            self.save_accounts()?;
+            Ok(())
+        } else {
+            Err("Account not found".to_string())
+        }
+    }
+
+    pub fn update_auth_data(&mut self, name: &str, access_token: String, profile: String) -> Result<(), String> {
+        if let Some(account) = self.storage.accounts.get_mut(name) {
+            account.access_token = access_token;
+            account.player_id = profile;
             account.update_last_used();
             self.save_accounts()?;
             Ok(())

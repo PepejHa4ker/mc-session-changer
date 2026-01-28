@@ -1,5 +1,6 @@
 use crate::hooks::packet::utils::{packet_class_name, push_packet_log};
 use crate::hooks::jhook::{HookAfter, HookCallback};
+use crate::mappings::classes;
 
 use jni::JNIEnv;
 use jni::objects::*;
@@ -93,7 +94,7 @@ unsafe fn collect_packet_class_names(
         return Ok(Vec::new());
     }
 
-    let pkt_cls = env.find_class("net/minecraft/network/Packet")?;
+    let pkt_cls = env.find_class(classes::PACKET)?;
     let mut names = Vec::with_capacity(size as usize);
 
     for i in 0..size {
