@@ -4,6 +4,7 @@ use crate::{
     graphics::svg_icons::SvgIconManager,
     initiate_unload,
     ui::account_manager::render_account_manager_tab,
+    ui::authenticator::render_authenticator_tab,
     ui::session_window::render_session_tab,
     ui::UiState,
 };
@@ -68,6 +69,26 @@ pub fn render_main_window(
                 }
 
                 ui.separator();
+
+                if render_clickable_icon_with_text(
+                    icon_manager,
+                    ui,
+                    "key",
+                    "Authenticator",
+                    if *ui_state.selected_tab == AppTab::Authenticator {
+                        Color32::from_rgb(255, 180, 50)
+                    } else {
+                        Color32::GRAY
+                    },
+                    Some(16),
+                    "Switch to Authenticator tab",
+                )
+                .clicked()
+                {
+                    *ui_state.selected_tab = AppTab::Authenticator;
+                }
+
+                ui.separator();
                 if render_clickable_icon_with_text(
                     icon_manager,
                     ui,
@@ -108,6 +129,7 @@ pub fn render_main_window(
             match *ui_state.selected_tab {
                 AppTab::SessionChanger => render_session_tab(ui_state, icon_manager, ui),
                 AppTab::AccountManager => render_account_manager_tab(ui_state, icon_manager, ui),
+                AppTab::Authenticator => render_authenticator_tab(ui_state, icon_manager, ui),
                 AppTab::PacketAnalyzer => render_packet_analyzer_tab(ui_state, icon_manager, ui),
                 AppTab::JvmAnalyzer => render_jvm_analyzer_tab(ui_state, ui),
             }

@@ -151,6 +151,13 @@ fn render_egui_frame(context: &mut PayloadContext, width: u32, height: u32) -> R
         expand_fields: &mut context.expand_fields,
         expand_methods: &mut context.expand_methods,
         member_search_query: &mut context.member_search_query,
+
+        auth_tab_username: &mut context.auth_tab_username,
+        auth_tab_password: &mut context.auth_tab_password,
+        auth_tab_result_token: &mut context.auth_tab_result_token,
+        auth_tab_result_profile: &mut context.auth_tab_result_profile,
+        auth_tab_in_progress: &mut context.auth_tab_in_progress,
+        auth_tab_error: &mut context.auth_tab_error,
     };
 
     let mut icon_manager = std::mem::take(&mut context.icon_manager);

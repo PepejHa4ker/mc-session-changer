@@ -61,4 +61,11 @@ pub struct UiState<'a> {
     pub expand_fields: &'a mut bool,
     pub expand_methods: &'a mut bool,
     pub member_search_query: &'a mut String,
+
+    pub auth_tab_username: &'a mut String,
+    pub auth_tab_password: &'a mut String,
+    pub auth_tab_result_token: &'a mut String,
+    pub auth_tab_result_profile: &'a mut String,
+    pub auth_tab_in_progress: &'a mut bool,
+    pub auth_tab_error: &'a mut Option<String>,
 }

@@ -85,12 +85,19 @@ pub struct PayloadContext {
     pub expand_methods: bool,
     pub member_search_query: String,
 
+    pub auth_tab_username: String,
+    pub auth_tab_password: String,
+    pub auth_tab_result_token: String,
+    pub auth_tab_result_profile: String,
+    pub auth_tab_in_progress: bool,
+    pub auth_tab_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppTab {
     SessionChanger,
     AccountManager,
+    Authenticator,
     PacketAnalyzer,
     JvmAnalyzer,
 }

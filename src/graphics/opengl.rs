@@ -152,6 +152,13 @@ pub unsafe fn create_render_context(hdc: HDC) -> Result<PayloadContext, String> 
         expand_fields: false,
         expand_methods: false,
         member_search_query: String::new(),
+
+        auth_tab_username: String::new(),
+        auth_tab_password: String::new(),
+        auth_tab_result_token: String::new(),
+        auth_tab_result_profile: String::new(),
+        auth_tab_in_progress: false,
+        auth_tab_error: None,
     })
 }
 
